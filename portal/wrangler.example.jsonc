@@ -1,0 +1,12 @@
+{
+  "name": "fabric-image-entry",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-06",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fabric-image-entry",
+      "database_id": "REPLACE_WITH_DATABASE_ID"
+    }
+  ]
+}

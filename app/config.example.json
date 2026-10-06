@@ -1,0 +1,13 @@
+{
+  "launcher": "",
+  "window_title": "ChatGPT",
+  "timeout": 600,
+  "confidence": 0.9,
+  "stable_seconds": 1.5,
+  "output_dir": "screenshots",
+  "points": {},
+  "client_size": null,
+  "template": "done_marker.png",
+  "download_dir": "",
+  "download_timeout": 90
+}
