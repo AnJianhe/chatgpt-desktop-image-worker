@@ -164,6 +164,27 @@ class Job:
     preview: Path | None = None
     review_version: int = 0
     review_action: str | None = None
+    review_active: bool = False
+
+
+class ReviewChannel:
+    supports_live_detection = True
+
+    def __init__(self, manager, job_id):
+        self.manager, self.job_id = manager, job_id
+
+    def __call__(self, preview, message):
+        # Download-menu failures and legacy runners keep their blocking flow.
+        return self.manager.request_review(self.job_id, preview, message)
+
+    def begin(self, preview, message):
+        return self.manager.begin_review(self.job_id, preview, message)
+
+    def poll(self, version):
+        return self.manager.poll_review(self.job_id, version)
+
+    def complete(self, version):
+        return self.manager.poll_review(self.job_id, version, automatic=True)
 
 
 class JobManager:
@@ -272,7 +293,7 @@ class JobManager:
                 self.jobs[job_id].stage = stage
         LOGGER.info("任务 %s：%s", job_id, stage)
 
-    def request_review(self, job_id: str, preview: Path, message: str) -> str:
+    def begin_review(self, job_id: str, preview: Path, message: str) -> int:
         preview = Path(preview).resolve()
         with Image.open(preview) as image:
             if image.format != "PNG":
@@ -283,20 +304,40 @@ class JobManager:
             job.preview = preview
             job.review_version += 1
             job.review_action = None
+            job.review_active = True
             job.status = "review"
             job.stage = message
             self.record(job)
-            LOGGER.info("任务 %s 等待远端确认，第 %s 次", job_id, job.review_version)
-            while job.review_action is None and not self.stop.is_set():
-                self.review_changed.wait(timeout=1)
+            return job.review_version
+
+    def poll_review(self, job_id: str, version: int, automatic=False):
+        # One lock chooses the winner. A confirmed end/retry always wins over auto.
+        with self.review_changed:
             if self.stop.is_set():
                 raise RuntimeError("服务器已停止，远端确认已取消；当前对话保留。")
+            job = self.jobs[job_id]
+            if version != job.review_version or not job.review_active:
+                raise RuntimeError("截图确认已处理或已更新。")
             action = job.review_action
+            if action is None and not automatic:
+                return None
+            if automatic and action in {None, "wait"}:
+                action = "auto"
+            job.review_active = False
+            job.review_action = action
+            job.status = "running"
+            job.stage = {"retry":"正在重试当前图片下载", "wait":"继续等待当前图片生成", "auto":"自动识别完成，正在下载原图", "end":"正在结束本次生成任务"}[action]
+            self.record(job)
+            return action
+
+    def request_review(self, job_id: str, preview: Path, message: str) -> str:
+        version = self.begin_review(job_id, preview, message)
+        with self.review_changed:
+            while self.jobs[job_id].review_action is None and not self.stop.is_set():
+                self.review_changed.wait(timeout=1)
+            action = self.poll_review(job_id, version)
             if action == "end":
                 raise NotGenerated("用户确认：本次未生成图片。请修改提示词后重新提交。")
-            job.status = "running"
-            job.stage = "正在重试当前图片下载" if action == "retry" else "继续等待当前图片生成"
-            self.record(job)
             return action
 
     def _work(self) -> None:
@@ -317,7 +358,7 @@ class JobManager:
                     validate_config(cfg, self.config_path)
                 log = lambda msg: self._log(job_id, msg)
                 path = Path(self.runner(job.prompt, cfg, self.config_path, log, (job.references if len(job.references) > 1 else job.reference),
-                                        lambda preview, message: self.request_review(job_id, preview, message)))
+                                        ReviewChannel(self, job_id)))
                 path = path.expanduser().resolve()
                 if not path.is_file() or path.stat().st_size == 0:
                     raise RuntimeError("桌面操作结束，但没有找到有效的原图文件。")
@@ -556,7 +597,7 @@ def make_app(
             job = manager.jobs.get(job_id)
             if job is None:
                 return jsonify(error="任务不存在。"), 404
-            if job.status != "review" or job.review_action is not None or type(body.get("version")) is not int or body["version"] != job.review_version:
+            if job.status != "review" or not job.review_active or job.review_action is not None or type(body.get("version")) is not int or body["version"] != job.review_version:
                 return jsonify(error="截图确认已处理或已更新，请等待页面刷新。"), 409
             job.review_action = body["action"]
             job.status = "running"

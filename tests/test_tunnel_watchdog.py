@@ -131,8 +131,8 @@ class WatchdogTests(unittest.TestCase):
             self.assertIsNone(watchdog.URL_RE.search(url))
 
     def test_created_tunnel_url_in_cloudflared_table_is_recognized(self):
-        line = '2026-10-06T03:00:00Z INF |  https://review-royalty-picking-encyclopedia.trycloudflare.com  |'
-        self.assertEqual(watchdog.URL_RE.search(line).group(0), 'https://review-royalty-picking-encyclopedia.trycloudflare.com')
+        line = '2026-10-06T03:00:00Z INF |  https://sample-public-tunnel.trycloudflare.com  |'
+        self.assertEqual(watchdog.URL_RE.search(line).group(0), 'https://sample-public-tunnel.trycloudflare.com')
 
     def test_metrics_with_and_without_labels(self):
         self.assertEqual(watchdog.active_connections(

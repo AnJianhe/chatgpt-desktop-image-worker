@@ -92,6 +92,12 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   assert.equal(await page.locator('#historyList article').count(),1);
   await page.locator('#historyList button').click();
   assert.match(await page.textContent('#statusBadge'),/未生成/);
+  const stillActive=jobs.get('task2');Object.assign(stillActive,{status:'review',review_version:1,preview_url:'/jobs/task2/preview?v=1'});await page.waitForTimeout(2300);
+  await page.locator('#taskList .task-card').nth(1).click();
+  await page.click('#endGeneration');
+  Object.assign(stillActive,{status:'done',image_url:'/jobs/task2/image'});await page.waitForTimeout(2300);
+  assert.equal(await page.locator('#endDialog').isVisible(),false);
+  assert.equal(reviews.length,3);
   assert.deepEqual(errors,[]);
   await page.reload();await page.waitForTimeout(100);
   assert.equal(await page.locator('#taskList .task-card').count(),3);

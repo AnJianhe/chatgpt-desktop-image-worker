@@ -606,8 +606,29 @@ class Automation:
         deadline = started + float(self.cfg["timeout"])
         review_at = started + 60
         stable_start, previous = None, None
-        while time.monotonic() < deadline:
-            if output is not None and self.review is not None and time.monotonic() >= review_at:
+        live_review = getattr(getattr(self, "review", None), "supports_live_detection", False) is True
+        review_version = None
+        while time.monotonic() < deadline or review_version is not None:
+            if review_version is not None:
+                action = self.review.poll(review_version)
+                if action == "end":
+                    raise NotGenerated("用户确认：本次未生成图片。")
+                if action == "retry":
+                    self.log("远端确认已生成，停止检测并立即下载……")
+                    self.scroll_latest()
+                    self.hover()
+                    return self.shot()
+                if action == "wait":
+                    review_version = None
+                    continued = time.monotonic()
+                    deadline = continued + float(self.cfg["timeout"])
+                    review_at = continued + 60
+                    self.log("继续等待，自动完成检测保持运行。")
+            if review_version is None and output is not None and self.review is not None and time.monotonic() >= review_at:
+                if live_review:
+                    preview = self.capture_review(output, "60 秒仍未识别完成，请查看截图；自动检测继续运行，识别完成后会自动下载。")
+                    review_version = self.review.begin(preview, "请确认截图；自动检测仍在继续。")
+                    continue
                 action = self.request_download_review(output, "已等待 60 秒仍未自动识别完成，请查看截图：已生成就直接下载，未生成就继续识别。")
                 if action == "retry":
                     self.log("远端确认已生成，直接右击图片下载副本……")
@@ -645,6 +666,12 @@ class Automation:
                     fresh = self.shot()
                     if (self.marker_present(fresh, marker)
                             and self.frame_delta(sample, self.content_sample(fresh)) < 0.6):
+                        if review_version is not None:
+                            action = self.review.complete(review_version)
+                            review_version = None
+                            if action == "end":
+                                raise NotGenerated("用户确认：本次未生成图片。")
+                            self.log("完成标记已确认，人工确认已关闭，下载当前图片……")
                         return fresh
                     stable_start = None
             else:
@@ -794,6 +821,15 @@ class Automation:
                 continue
             self.log("等待原图下载完成：" + str(folder))
             return self.wait_download(folder, before, output)
+
+    def capture_review(self, output, message):
+        self.assert_target()
+        self.pag.press("esc")
+        self.sleep(0.15)
+        preview = output / ("review_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".png")
+        self.shot().save(preview)
+        self.log(message)
+        return preview
 
     def request_download_review(self, output, message):
         self.assert_target()

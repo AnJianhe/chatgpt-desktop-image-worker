@@ -156,7 +156,12 @@
     try { await Promise.all(tasks.filter(t=>t.id&&!terminal.has(t.status)).map(async t=>{
       try {const data=await request('/jobs/'+encodeURIComponent(t.id));const {referenceImages, ...progress}=data;Object.assign(t,progress);t.networkError=null;}
       catch(e){t.networkError=e.message;if(e.status===404){t.status='error';t.error='服务器中已无此任务记录，请重新提交。';}}
-    }));persist();render(); } finally {polling=false;}
+    }));
+      if(modalTarget){
+        const pending=tasks.find(t=>t.request_id===modalTarget.requestId);
+        if(!pending || pending.status!=='review' || pending.review_version!==modalTarget.version){$('endDialog').close();modalTarget=null;}
+      }
+      persist();render(); } finally {polling=false;}
   }
   async function decide(target,action,confirmed=false) {
     const t=tasks.find(t=>t.request_id===target.requestId);
