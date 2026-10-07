@@ -33,3 +33,7 @@ verification/*.log
 
 app/job-inputs/
 job-inputs/
+
+app/generation-history/
+generation-history/
+*.sqlite3*

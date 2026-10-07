@@ -21,13 +21,17 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
     const data=request.method()==='POST'?request.postDataJSON():{};
     return json({status:'ok',nonce:data.nonce,server_id:data.server_id});
    }
+   if(p==='/history'){
+    const all=[...jobs.values()].filter(j=>!url.searchParams.get('status')||j.status===url.searchParams.get('status')).reverse();
+    return json({items:all.slice(Number(url.searchParams.get('offset')||0),Number(url.searchParams.get('offset')||0)+20),total:all.length});
+   }
    if(p==='/uploads'){
     const id=request.postData().match(/name="upload_id"\r\n\r\n([^\r]+)/)[1];return json({upload_id:id});
    }
    if(p==='/jobs'){
     const body=request.postDataJSON();bodies.push(body);
     const id='task'+bodies.length;
-    jobs.set(id,{id,status:bodies.length===1?'running':'queued',prompt:body.prompt,referenceImages:body.upload_ids,stage:'test'});
+    jobs.set(id,{id,created_at:Date.now()/1000,status:bodies.length===1?'running':'queued',prompt:body.prompt,referenceImages:body.upload_ids,stage:'test'});
     return json({id,status:jobs.get(id).status});
    }
    const parts=p.split('/'),id=parts[2],job=jobs.get(id);
@@ -82,6 +86,12 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   await page.click('#confirmEnd');await page.waitForTimeout(100);
   assert.deepEqual(reviews[2],{id:'task1',action:'end',version:3,confirmed:true});
   assert.equal(a.status,'not_generated');assert.equal(jobs.get('task2').status,'queued');
+  await page.click('#refreshHistory');await page.waitForTimeout(100);
+  assert.equal(await page.locator('#historyList article').count(),3);
+  await page.selectOption('#historyFilter','not_generated');await page.waitForTimeout(100);
+  assert.equal(await page.locator('#historyList article').count(),1);
+  await page.locator('#historyList button').click();
+  assert.match(await page.textContent('#statusBadge'),/未生成/);
   assert.deepEqual(errors,[]);
   await page.reload();await page.waitForTimeout(100);
   assert.equal(await page.locator('#taskList .task-card').count(),3);

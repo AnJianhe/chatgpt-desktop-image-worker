@@ -158,6 +158,19 @@
         </div>
       </section>
     </main>
+    <section class="card" style="padding:24px;margin-bottom:30px" aria-labelledby="historyTitle">
+      <h2 id="historyTitle">生成记录</h2>
+      <p>查看以前的提示词、状态和结果。记录保存在执行电脑，服务器重启后仍可查看。</p>
+      <select id="historyFilter" aria-label="按状态筛选生成记录">
+        <option value="">全部记录</option><option value="done">生成成功</option><option value="not_generated">未生成图片</option><option value="error">执行失败</option><option value="queued">排队中</option><option value="running">正在执行</option><option value="review">等待人工确认</option>
+      </select>
+      <button id="refreshHistory" class="secondary" type="button">刷新记录</button>
+      <p id="historyMessage" aria-live="polite"></p>
+      <div id="historyList" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px"></div>
+      <button id="historyPrevious" class="secondary" type="button">上一页</button>
+      <span id="historyPage"></span>
+      <button id="historyNext" class="secondary" type="button">下一页</button>
+    </section>
     <footer>生成完成后可下载原图，或继续描述下一幅画面。</footer>
   </div>
   <dialog id="endDialog" style="max-width:560px;border:1px solid #dce5f0;border-radius:12px;padding:24px">

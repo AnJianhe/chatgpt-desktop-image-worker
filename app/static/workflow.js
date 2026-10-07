@@ -141,7 +141,7 @@
     } catch(e) {
       if(e.status && e.status<500 && e.status!==429){t.status='error';t.error=e.message;}
       else t.submitError=e.message+'；可恢复提交，使用相同编号防止重复生成。';
-    } finally {t.submitting=false;persist();render();}
+    } finally {t.submitting=false;persist();render();loadHistory();}
   }
   $('promptForm').onsubmit=event=>{
     event.preventDefault(); const tool=catalog.tools.find(r=>r.id===$('fabricTool').value);
@@ -177,6 +177,46 @@
   $('applyPreset').onclick=applyPreset;
   $('prompt').oninput=()=>{generatedPreset=null;render();persist();};
   document.querySelectorAll('.example').forEach(button=>button.onclick=()=>{$('fabricTheme').value=button.dataset.theme;$('fabricTool').value='fabric';applyPreset();});
+  let historyOffset=0, historyTotal=0, historyBusy=false;
+  function selectRecord(record) {
+    let task=tasks.find(t=>t.id===record.id);
+    if(!task){task={...record,request_id:record.id,referenceImages:record.referenceImages.map(id=>({key:id,uploadId:id}))};tasks.push(task);}
+    else {const {referenceImages,...progress}=record;Object.assign(task,progress);}
+    selected=task.request_id;render();persist();
+    $('resultTitle').scrollIntoView({behavior:'smooth',block:'start'});
+  }
+  async function loadHistory() {
+    if(historyBusy)return;historyBusy=true;
+    const requestedOffset=historyOffset, requestedFilter=$('historyFilter').value;
+    try {
+      const data=await request('/history?offset='+requestedOffset+'&limit=20&status='+encodeURIComponent(requestedFilter));
+      if(requestedOffset!==historyOffset||requestedFilter!==$('historyFilter').value)return;
+      historyTotal=data.total;
+      $('historyList').replaceChildren();
+      data.items.forEach(record=>{
+        const card=document.createElement('article');card.className='reference';
+        const meta=document.createElement('p');meta.textContent=new Date(record.created_at*1000).toLocaleString('zh-CN')+' · '+(names[record.status]||record.status);
+        const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent=record.prompt.slice(0,65)||'提示词';
+        const prompt=document.createElement('pre');prompt.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';prompt.textContent=record.prompt;details.append(summary,prompt);
+        card.append(meta,details);
+        if(record.status==='done' && record.image_url){
+          const img=document.createElement('img');img.src=record.image_url;img.loading='lazy';img.alt='生成记录图片';img.style.cssText='width:100%;height:160px;object-fit:contain';card.append(img);
+          const link=document.createElement('a');link.href=record.image_url;link.download=record.image_filename||'生成图片.png';link.className='secondary';link.textContent='下载原图';card.append(link);
+        }
+        const stage=document.createElement('p');stage.textContent=record.error||record.stage;card.append(stage);
+        const open=document.createElement('button');open.type='button';open.className='secondary';open.textContent='查看此任务';open.onclick=()=>selectRecord(record);card.append(open);
+        $('historyList').append(card);
+      });
+      $('historyMessage').textContent=historyTotal?'共 '+historyTotal+' 条记录':'还没有生成记录，提交任务后会自动保存。';
+      $('historyPage').textContent=historyTotal?'第 '+(Math.floor(historyOffset/20)+1)+' / '+Math.ceil(historyTotal/20)+' 页':'';
+      $('historyPrevious').disabled=historyOffset===0;$('historyNext').disabled=historyOffset+20>=historyTotal;
+    } catch(e){$('historyMessage').textContent='记录暂时无法加载：'+e.message+'，请点击刷新记录。';}
+    finally{historyBusy=false;if(requestedOffset!==historyOffset||requestedFilter!==$('historyFilter').value)loadHistory();}
+  }
+  $('historyFilter').onchange=()=>{historyOffset=0;loadHistory();};
+  $('refreshHistory').onclick=loadHistory;
+  $('historyPrevious').onclick=()=>{historyOffset=Math.max(0,historyOffset-20);loadHistory();};
+  $('historyNext').onclick=()=>{if(historyOffset+20<historyTotal){historyOffset+=20;loadHistory();}};
   async function heartbeat() {
     if(heartbeatBusy)return;heartbeatBusy=true;const nonce=uid();
     try {
@@ -208,6 +248,6 @@
   });
   try{restore(JSON.parse(sessionStorage.getItem(storageKey)||sessionStorage.getItem('image-helper-current-task-v1')||'null'));}catch(_){}
   if(!$('prompt').value)applyPreset();
-  renderReferences();render();heartbeat();setInterval(heartbeat,5000);setInterval(poll,2000);
+  renderReferences();render();heartbeat();loadHistory();setInterval(loadHistory,10000);setInterval(heartbeat,5000);setInterval(poll,2000);
   window.addEventListener('online',()=>{heartbeat();poll();});
 })();

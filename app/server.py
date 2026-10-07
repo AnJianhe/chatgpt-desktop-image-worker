@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import argparse
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import io
 import logging
@@ -28,6 +28,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from chatgpt_image_ui import NotGenerated, Automation, DEFAULT_CONFIG, enable_dpi, load_config
 from fabric_presets import FABRIC_CATALOG, prepare_prompt
+from generation_history import GenerationHistory
 
 BASE = Path(__file__).resolve().parent
 LOGGER = logging.getLogger("chatgpt_remote_image")
@@ -146,6 +147,7 @@ def desktop_runner(prompt: str, cfg: dict, config_path: Path, log: Callable[[str
 class Job:
     id: str
     prompt: str
+    created_at: float = field(default_factory=time.time)
     request_id: str | None = None
     upload_id: str | None = None
     reference: Path | None = None
@@ -175,6 +177,7 @@ class JobManager:
         self.queue: queue.Queue[str] = queue.Queue(maxsize=max_queue)
         self.lock = threading.RLock()
         self.review_changed = threading.Condition(self.lock)
+        self.history = GenerationHistory(config_path.parent / "generation-history")
         self.stop = threading.Event()
         self.worker = threading.Thread(target=self._work, name="desktop-image-worker", daemon=True)
         self.worker.start()
@@ -203,6 +206,12 @@ class JobManager:
                 if job.prompt != prompt or job.original_prompt != (prompt if original_prompt is None else original_prompt) or job.upload_ids != upload_ids or job.tool != tool:
                     raise ValueError("同一个 request_id 已用于不同提示词或参考图片。")
                 return job, False
+            if request_id:
+                saved = self.history.get(request_id=request_id)
+                if saved:
+                    if saved['sent_prompt'] != prompt or saved['prompt'] != (prompt if original_prompt is None else original_prompt) or tuple(saved['referenceImages']) != upload_ids or saved['tool'] != tool:
+                        raise ValueError("同一个 request_id 已用于不同提示词或参考图片。")
+                    return Job(id=saved['id'], prompt=prompt, status=saved['status']), False
             if self.stop.is_set():
                 raise RuntimeError("本地服务器正在停止，请稍后重试。")
             job = Job(id=uuid.uuid4().hex, prompt=prompt, request_id=request_id, upload_id=upload_id, reference=reference)
@@ -228,6 +237,7 @@ class JobManager:
             self.jobs[job.id] = job
             if request_id:
                 self.request_ids[request_id] = job.id
+            self.record(job)
             self._trim()
             return job, True
 
@@ -235,8 +245,9 @@ class JobManager:
         with self.lock:
             job = self.jobs.get(job_id)
             if job is None:
-                return None
-            data = {"id": job.id, "taskId": job.id, "prompt": job.original_prompt, "sent_prompt": job.prompt, "tool": job.tool, "referenceImages": list(job.upload_ids), "status": job.status, "stage": job.stage, "error": job.error, "result": None}
+                saved = self.history.get(job_id=job_id)
+                return self.history.public(saved) if saved else None
+            data = {"id": job.id, "taskId": job.id, "created_at": job.created_at, "prompt": job.original_prompt, "sent_prompt": job.prompt, "tool": job.tool, "referenceImages": list(job.upload_ids), "status": job.status, "stage": job.stage, "error": job.error, "result": None}
             if job.status == "done":
                 data["image_url"] = "/jobs/" + job.id + "/image"
                 data["image_filename"] = job.image_filename
@@ -248,6 +259,11 @@ class JobManager:
                 waiting = [j.id for j in self.jobs.values() if j.status == "queued"]
                 data["queue_position"] = waiting.index(job.id) + 1
             return data
+
+    def record(self, job):
+        data = self.snapshot(job.id)
+        data.update(request_id=job.request_id, _image=str(job.image) if job.image else None, _mimetype=job.image_mimetype, _filename=job.image_filename)
+        self.history.save(data)
 
     def _log(self, job_id: str, message: str) -> None:
         stage = str(message).strip()[:500]
@@ -269,6 +285,7 @@ class JobManager:
             job.review_action = None
             job.status = "review"
             job.stage = message
+            self.record(job)
             LOGGER.info("任务 %s 等待远端确认，第 %s 次", job_id, job.review_version)
             while job.review_action is None and not self.stop.is_set():
                 self.review_changed.wait(timeout=1)
@@ -279,6 +296,7 @@ class JobManager:
                 raise NotGenerated("用户确认：本次未生成图片。请修改提示词后重新提交。")
             job.status = "running"
             job.stage = "正在重试当前图片下载" if action == "retry" else "继续等待当前图片生成"
+            self.record(job)
             return action
 
     def _work(self) -> None:
@@ -292,6 +310,7 @@ class JobManager:
                     job = self.jobs[job_id]
                     job.status = "running"
                     job.stage = "读取本地配置"
+                    self.record(job)
                 # 每次任务读取配置，校准后无需重启服务器。
                 cfg = load_config(self.config_path)
                 if self.validate:
@@ -314,18 +333,21 @@ class JobManager:
                 mimetype, extension = IMAGE_FORMATS[image_format]
                 valid_suffixes = {".jpg", ".jpeg"} if image_format == "JPEG" else {extension}
                 filename = path.name if path.suffix.lower() in valid_suffixes else path.stem + extension
+                path = self.history.preserve_image(job.id, path)
                 with self.lock:
                     job.image = path
                     job.image_mimetype = mimetype
                     job.image_filename = filename
                     job.status = "done"
                     job.stage = "图片已生成，原图已下载，可查看和保存"
+                    self.record(job)
             except NotGenerated as exc:
                 with self.lock:
                     job = self.jobs[job_id]
                     job.status = "not_generated"
                     job.stage = str(exc)
                     job.error = None
+                    self.record(job)
             except Exception as exc:
                 LOGGER.exception("任务 %s 执行失败", job_id)
                 with self.lock:
@@ -333,6 +355,7 @@ class JobManager:
                     job.status = "error"
                     job.error = str(exc) or type(exc).__name__
                     job.stage = "执行失败"
+                    self.record(job)
             finally:
                 self.queue.task_done()
                 with self.lock:
@@ -491,6 +514,19 @@ def make_app(
             status = job.status
         return jsonify(id=job.id, status=status), 202 if created else 200
 
+    @app.get("/history")
+    def generation_records():
+        try:
+            offset = max(0, int(request.args.get("offset", "0")))
+            limit = min(100, max(1, int(request.args.get("limit", "20"))))
+        except ValueError:
+            return jsonify(error="分页参数无效。"), 400
+        status = request.args.get("status") or None
+        if status and status not in {"queued", "running", "review", "done", "not_generated", "error"}:
+            return jsonify(error="记录状态无效。"), 400
+        with manager.lock:
+            return jsonify(manager.history.page(offset, limit, status))
+
     @app.get("/jobs/<job_id>")
     def job_status(job_id: str):
         data = manager.snapshot(job_id)
@@ -532,12 +568,20 @@ def make_app(
         with manager.lock:
             job = manager.jobs.get(job_id)
             if job is None:
-                return jsonify(error="任务不存在或已从历史记录中移除。"), 404
-            if job.status != "done" or job.image is None:
-                return jsonify(error="图片尚未生成完成。", status=job.status), 409
-            path = job.image
-            mimetype = job.image_mimetype
-            filename = job.image_filename
+                saved = manager.history.get(job_id=job_id)
+                if saved is None:
+                    return jsonify(error="任务不存在。"), 404
+                if saved["status"] != "done" or not saved.get("_image"):
+                    return jsonify(error="此任务没有生成图片。", status=saved["status"]), 409
+                path = Path(saved["_image"])
+                mimetype = saved["_mimetype"]
+                filename = saved["_filename"]
+            else:
+                if job.status != "done" or job.image is None:
+                    return jsonify(error="图片尚未生成完成。", status=job.status), 409
+                path = job.image
+                mimetype = job.image_mimetype
+                filename = job.image_filename
         if not path.is_file():
             return jsonify(error="原图文件已被移动或删除。"), 404
         return send_file(path, mimetype=mimetype, download_name=filename, conditional=True)

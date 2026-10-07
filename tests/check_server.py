@@ -129,9 +129,11 @@ def main():
             assert failed["status"] == "error" and failed["error"] == "模拟生成失败", failed
             assert client.get("/jobs/" + failed_id + "/image").status_code == 409
             assert len(manager.jobs) == 3
-            assert client.get("/jobs/" + first).status_code == 404
+            assert client.get("/jobs/" + first).status_code == 200
+            assert client.get("/history").json["total"] >= 4
             image_path.unlink()
-            assert client.get("/jobs/" + second + "/image").status_code == 404
+            with client.get("/jobs/" + second + "/image") as archived:
+                assert archived.status_code == 200 and archived.data == PNG
             assert client.post("/jobs", data=b"x" * 65537, content_type="application/json").status_code == 413
         finally:
             release.set()

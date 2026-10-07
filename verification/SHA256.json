@@ -1,16 +1,16 @@
 {
-  "version": "0.2.0",
+  "version": "0.2.1",
   "watchdog_version": 10,
   "files": [
     {
       "path": ".gitignore",
-      "bytes": 490,
-      "sha256": "7653e9908bb2b7e1b6943e65f360542d736c928592e49130c18ff362276d6992"
+      "bytes": 550,
+      "sha256": "239d8cf5eb6a3df340df24dd5a07cdf8aaef0f2331292696eeba618932cd39d2"
     },
     {
       "path": "CHANGELOG.md",
-      "bytes": 938,
-      "sha256": "ef28c02ec815935606f1d09399a7ac2f1723fcb4a26e0f2ec3d2c63c31a307c4"
+      "bytes": 1189,
+      "sha256": "28cefdf73088b1a5c9f64e20e476fcbdc232411bfc71dbbfc6fc25f6ebe65701"
     },
     {
       "path": "LICENSE",
@@ -19,13 +19,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 10780,
-      "sha256": "efad679f06ed4682a5ef5cc0641e9053843f10c07fb131be6497559531156060"
+      "bytes": 11507,
+      "sha256": "a4bbcf45127176ffd31f0ae714b5a5277639460633e221422e17e45e8f49d817"
     },
     {
       "path": "VERSION",
       "bytes": 7,
-      "sha256": "c58a749f70f5e1ba5394ebcdbfcfa02fa938c4a173d8e41e6c476a7c8b2acddd"
+      "sha256": "be98f0e67023f46ff8c80f0f64406d49a7b9a5b6e9576b77b86d07a4dffd2310"
     },
     {
       "path": "app/chatgpt_image_ui.py",
@@ -41,6 +41,11 @@
       "path": "app/fabric_presets.py",
       "bytes": 13803,
       "sha256": "dc43e745fc1043a8886ea28e91fc6f12e04624daf316f0eede30bccccb63b32d"
+    },
+    {
+      "path": "app/generation_history.py",
+      "bytes": 3272,
+      "sha256": "ab99790d5f0b49ae5eea27fd94821a8cb0a91280a494c048770419f9db960000"
     },
     {
       "path": "app/link_sync.py",
@@ -59,18 +64,18 @@
     },
     {
       "path": "app/server.py",
-      "bytes": 30435,
-      "sha256": "1170a7a1377c7c0434321f48f84a0a3e4a8bb572aad324e924a2e51ad060b2e3"
+      "bytes": 32915,
+      "sha256": "a8aa542ad5f4db85c4a52a418d63829e8ccf0ff1b11965e7ef1870058f84a523"
     },
     {
       "path": "app/static/workflow.js",
-      "bytes": 16087,
-      "sha256": "7498f37b17a742bcbc37aef114f0b8bf02f078b0a4ce93d470634f5eee96155c"
+      "bytes": 19578,
+      "sha256": "a94b76b52e7eb761e6216c337621f2df8ffca6d4f199f22a85b22860079dd03c"
     },
     {
       "path": "app/templates/index.html",
-      "bytes": 15897,
-      "sha256": "23b497d653ada09fb913cf9aa37cd52902159c221856d160ef771312d0e6ba47"
+      "bytes": 17072,
+      "sha256": "3cc40d4458851d0c8af33d2ec901fbd635c17cf328eac1428f5a33d878feecc3"
     },
     {
       "path": "app/tunnel_watchdog.py",
@@ -164,13 +169,13 @@
     },
     {
       "path": "tests/browser_workflow.cjs",
-      "bytes": 6151,
-      "sha256": "0e08544d1e23454729fc3c8208a78cd864c20ab5e4cbd518648199d30935fd2d"
+      "bytes": 7003,
+      "sha256": "a41985a0fdeeb0d4de9a550b668b54eb5b7e83d9a818a2561743cecfda000cba"
     },
     {
       "path": "tests/check_server.py",
-      "bytes": 7011,
-      "sha256": "57791947e087f4847a9fe8106e4acbc46cec861a9d7b0cab4a0dadd180111ea1"
+      "bytes": 7142,
+      "sha256": "a8e877e7b3aa12351b84ac6ecff6cc7f26f5dab091d05c561e15efc376df04f1"
     },
     {
       "path": "tests/render_workflow_fixture.py",
@@ -186,6 +191,11 @@
       "path": "tests/test_bottom_completion.py",
       "bytes": 6873,
       "sha256": "53eba88199c23bd1fb1274ddd28006816975fea24c071c63f0e6bcdbc829938f"
+    },
+    {
+      "path": "tests/test_generation_history.py",
+      "bytes": 5124,
+      "sha256": "87a18ef390d6c04c0ad88ea0df214314a0c65bd93d27c0bfc8de3140bd513d0d"
     },
     {
       "path": "tests/test_link_sync.py",
@@ -244,8 +254,8 @@
     },
     {
       "path": "verification/RESULTS.md",
-      "bytes": 2706,
-      "sha256": "d05ab0e3a8b76caebf5349f6b38ac41892692e54c4ffed59b59e04df7f4886ab"
+      "bytes": 3014,
+      "sha256": "6bcb72383dc1e4f60e966d7d6dcd52ebaf872e72110fa07c52e2d3367907457a"
     }
   ]
 }
