@@ -1,5 +1,5 @@
 {
-  "version": "0.2.2",
+  "version": "0.2.3",
   "watchdog_version": 10,
   "files": [
     {
@@ -9,8 +9,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "bytes": 1442,
-      "sha256": "d384ed5ac4be2a3d6c52cb47171afaef5eb487040f072af4bd29982b97fc47d6"
+      "bytes": 1688,
+      "sha256": "012db211fec61f615239f72fa77e4cb282536d82c68eb5717d0663e0ab3b497d"
     },
     {
       "path": "LICENSE",
@@ -19,13 +19,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 12179,
-      "sha256": "f2aa92093a328f0a15700637e21f5f04b0487887b4f90363e5cb8298d3a19954"
+      "bytes": 12595,
+      "sha256": "cf876da959413ee6ddf6280f447da985f1943e689feb619a204728cb77652429"
     },
     {
       "path": "VERSION",
       "bytes": 7,
-      "sha256": "19bd24b7bb1947301e2c83ce0e1429cfbc6763573bf16dc95cdd6fd6a98b2d1c"
+      "sha256": "b163b3230987950daf467f0339a1dc61c84281ea4e2e0d61388c588cf561e9e2"
     },
     {
       "path": "app/chatgpt_image_ui.py",
@@ -69,13 +69,13 @@
     },
     {
       "path": "app/static/workflow.js",
-      "bytes": 19836,
-      "sha256": "8af1fa2e4f2bade8264afa661a4a402145394e6ff0610c7123727f03fe0dd11c"
+      "bytes": 24028,
+      "sha256": "53239f90b4f196d36f9ce3e96259953ccb5be127bbe0f82d6854573689e8333f"
     },
     {
       "path": "app/templates/index.html",
-      "bytes": 17072,
-      "sha256": "3cc40d4458851d0c8af33d2ec901fbd635c17cf328eac1428f5a33d878feecc3"
+      "bytes": 18638,
+      "sha256": "aa2ec7a0b11b92791632296e5f5255c33bfda301062887b490a279963566d519"
     },
     {
       "path": "app/tunnel_watchdog.py",
@@ -169,8 +169,8 @@
     },
     {
       "path": "tests/browser_workflow.cjs",
-      "bytes": 7489,
-      "sha256": "e5ad0b50976003bbb0e872bdd60c294689e84aab755a76bd49f143672f9c42dd"
+      "bytes": 10433,
+      "sha256": "f4b7eeeb8f9b23851aa441f9739ebbb516756f436da2907016e3127943a50115"
     },
     {
       "path": "tests/check_server.py",
@@ -259,8 +259,8 @@
     },
     {
       "path": "verification/RESULTS.md",
-      "bytes": 3466,
-      "sha256": "cf2c90ff3b6b1e7be30dd706eba016e693029a68ff4fe3e1c06f7c57929024c4"
+      "bytes": 3841,
+      "sha256": "9b8869be58c220f47f85123561db148211b5f667d35a2d16a7f6f53861b56cc9"
     }
   ]
 }

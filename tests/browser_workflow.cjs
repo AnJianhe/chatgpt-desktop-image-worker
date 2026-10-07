@@ -10,7 +10,12 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
 (async()=>{
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try {
-  const page=await browser.newPage(); const errors=[], bodies=[], reviews=[]; const jobs=new Map();
+  const page=await browser.newPage(); const errors=[], bodies=[], reviews=[]; const jobs=new Map();let heartbeatFail=false;
+  await page.addInitScript(()=>{
+    window.spoken=[];
+    window.SpeechSynthesisUtterance=function(text){this.text=text;};
+    Object.defineProperty(window,'speechSynthesis',{value:{getVoices:()=>[{lang:'zh-CN'}],cancel:()=>{},speak:u=>window.spoken.push(u.text)}});
+  });
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('http://127.0.0.1:18977/**',async route=>{
    const request=route.request(),url=new URL(request.url()),p=url.pathname;
@@ -18,6 +23,7 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
    if(p==='/')return route.fulfill({contentType:'text/html',body:html});
    if(p==='/static/workflow.js')return route.fulfill({contentType:'application/javascript',body:script});
    if(p==='/api/tunnel-heartbeat'){
+    if(heartbeatFail)return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'连接失败'})});
     const data=request.method()==='POST'?request.postDataJSON():{};
     return json({status:'ok',nonce:data.nonce,server_id:data.server_id});
    }
@@ -44,7 +50,14 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
    return route.fulfill({status:404,body:'{}'});
   });
   await page.goto('http://127.0.0.1:18977/');
+  await page.selectOption('#fabricTool','edit');
+  await page.fill('#prompt','修改图片');await page.click('#submitButton');
+  assert.match(await page.textContent('#attentionText'),/需要先上传/);
+  assert.equal(await page.evaluate(()=>document.body.classList.contains('needs-attention')),true);
+  assert.match(await page.evaluate(()=>window.spoken.at(-1)),/请上传参考图片/);
+  assert.equal(bodies.length,0);
   await page.selectOption('#fabricTool','custom');
+  await page.fill('#prompt','');
   assert.equal(await page.inputValue('#prompt'),'');
   assert.equal(await page.locator('#applyPreset').isVisible(),false);
   const literal='  建筑摄影\n任意提示词，沿用参考图配色；无参考图时采用协调自然配色。  ';
@@ -56,6 +69,7 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   assert.equal(await page.locator('#referencePreviews .reference-card').count(),3);
   await page.setInputFiles('#referenceFile',file(4));
   assert.match(await page.textContent('#errorMessage'),/最多 3/);
+  assert.match(await page.textContent('#attentionText'),/最多 3/);
   assert.equal(await page.locator('#referencePreviews .reference-card').count(),3);
   await page.locator('#referencePreviews button').nth(1).click();
   assert.equal(await page.locator('#referencePreviews .reference-card').count(),2);
@@ -71,7 +85,13 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   assert.equal(bodies[2].prompt,'任务C');assert.equal(bodies[2].upload_ids.length,2);
   assert.deepEqual(bodies[2].upload_ids,bodies[1].upload_ids.slice(1));
   const a=jobs.get('task1');Object.assign(a,{status:'review',review_version:1,preview_url:'/jobs/task1/preview?v=1'});
-  await page.waitForTimeout(2300);await page.locator('#taskList .task-card').last().click();
+  await page.waitForTimeout(2300);
+  assert.match(await page.textContent('#attentionText'),/需要人工确认/);
+  assert.equal(await page.locator('#viewAttentionTask').isVisible(),true);
+  const spokenCount=await page.evaluate(()=>window.spoken.length);
+  await page.waitForTimeout(2300);
+  assert.equal(await page.evaluate(()=>window.spoken.length),spokenCount);
+  await page.click('#viewAttentionTask');
   await page.click('#endGeneration');
   assert.equal(reviews.length,0);assert.equal(a.status,'review');
   await page.click('#cancelEnd');assert.equal(reviews.length,0);assert.equal(a.status,'review');
@@ -97,6 +117,25 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   await page.click('#endGeneration');
   Object.assign(stillActive,{status:'done',image_url:'/jobs/task2/image'});await page.waitForTimeout(2300);
   assert.equal(await page.locator('#endDialog').isVisible(),false);
+  assert.equal(await page.locator('#attentionBanner').isVisible(),false);
+  const c=jobs.get('task3');Object.assign(c,{status:'error',error:'下载文件失败'});await page.waitForTimeout(2300);
+  assert.match(await page.textContent('#attentionText'),/下载文件失败/);
+  await page.waitForTimeout(2300);
+  assert.equal(await page.locator('#attentionBanner').isVisible(),true);
+  await page.click('#dismissAttention');
+  assert.equal(await page.locator('#attentionBanner').isVisible(),false);
+  const beforeMute=await page.evaluate(()=>window.spoken.length);
+  await page.uncheck('#voiceEnabled');await page.click('#repeatAttention');
+  assert.equal(await page.evaluate(()=>window.spoken.length),beforeMute);
+  await page.check('#voiceEnabled');
+  assert.equal(await page.evaluate(()=>window.spoken.length),beforeMute+1);
+  heartbeatFail=true;
+  await page.waitForFunction(()=>document.querySelector('#attentionText').textContent.includes('连接暂时出现问题'),null,{timeout:20000});
+  const outageCount=await page.evaluate(()=>window.spoken.length);
+  await page.waitForTimeout(5300);
+  assert.equal(await page.evaluate(()=>window.spoken.length),outageCount);
+  heartbeatFail=false;
+  await page.waitForFunction(()=>document.querySelector('#attentionBanner').hidden,null,{timeout:8000});
   assert.equal(reviews.length,3);
   assert.deepEqual(errors,[]);
   await page.reload();await page.waitForTimeout(100);
@@ -104,6 +143,9 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   assert.equal(bodies.length,3);
   await page.setViewportSize({width:390,height:844});
   assert.equal(await page.locator('#submitButton').isVisible(),true);
-  console.log('PASS: custom literal prompt; 0/2/3 references; fourth rejection; independent deletion/re-add; A/B/C submissions; wait/retry/end/cancel; modal target isolation; history reload; mobile viewport; no JS errors.');
+  await page.click('#dismissAttention');
+  await page.selectOption('#fabricTool','edit');await page.fill('#prompt','修改');await page.click('#submitButton');
+  await page.screenshot({path:process.env.ALERT_SCREENSHOT||'work/voice-alert-mobile.png',fullPage:true});
+  console.log('PASS: workflow regression; required-reference red frame and voice; review of unselected task; poll speech deduplication; auto-completion clears alert; persistent error and acknowledgement; voice mute/unmute; connection warning and recovery; mobile viewport; no JS errors.');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

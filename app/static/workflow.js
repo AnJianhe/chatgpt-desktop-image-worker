@@ -42,7 +42,62 @@
     try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch (_) {}
     if (ready && config.entryOrigin && window.parent !== window) window.parent.postMessage({type:'fabric-task-state',state},config.entryOrigin);
   }
-  function error(message) { $('errorMessage').textContent = message || ''; $('errorMessage').hidden = !message; }
+  let inputWarning=null, connectionWarning=null, connectionFailures=0;
+  const announced=new Set(), dismissed=new Set();
+  let activeWarning=null, voiceEnabled=true;
+  try { voiceEnabled=localStorage.getItem('image-helper-voice')!=='off'; } catch (_) {}
+  $('voiceEnabled').checked=voiceEnabled;
+  function speak(message) {
+    if(!voiceEnabled || !window.speechSynthesis || !window.SpeechSynthesisUtterance)return;
+    const utterance=new SpeechSynthesisUtterance(message);
+    utterance.lang='zh-CN';utterance.rate=1;
+    const chinese=speechSynthesis.getVoices().find(v=>/^zh(-|_)/i.test(v.lang));
+    if(chinese)utterance.voice=chinese;
+    speechSynthesis.cancel();speechSynthesis.speak(utterance);
+  }
+  function warningForTask(t) {
+    if(t.status==='review')return {key:t.request_id+':review:'+t.review_version,task:t,
+      text:'需要人工确认：请查看截图，选择“已经生成”“继续等待”或“生成已结束”。',
+      voice:'请查看界面，选择是否下载图片。已经生成，请点击已经生成；还在生成，请点击继续等待。'};
+    if(t.submitError || t.status==='error')return {key:t.request_id+':error:'+(t.submitError||t.error),task:t,
+      text:'任务出现问题：'+(t.submitError||t.error||t.stage||'请查看任务详情。'),
+      voice:'任务出现问题，请查看界面的红色提示。'};
+    return null;
+  }
+  function refreshWarning() {
+    const warning=inputWarning || tasks.map(warningForTask).find(w=>w?.task.status==='review') ||
+      tasks.map(warningForTask).find(w=>w&&!dismissed.has(w.key)) || (connectionWarning&&!dismissed.has(connectionWarning.key)?connectionWarning:null);
+    if(!warning && activeWarning)window.speechSynthesis?.cancel();
+    activeWarning=warning||null;
+    $('attentionBanner').hidden=!warning;
+    document.body.classList.toggle('needs-attention',!!warning);
+    $('attentionText').textContent=warning?.text||'';
+    $('viewAttentionTask').hidden=!warning?.task;
+    $('dismissAttention').hidden=!warning || warning.task?.status==='review';
+    if(warning && !announced.has(warning.key)){
+      announced.add(warning.key);speak(warning.voice);
+    }
+  }
+  $('dismissAttention').onclick=()=>{if(activeWarning){dismissed.add(activeWarning.key);if(activeWarning===inputWarning)inputWarning=null;if(activeWarning===connectionWarning)connectionWarning=null;refreshWarning();}};
+  $('voiceEnabled').onchange=()=>{
+    voiceEnabled=$('voiceEnabled').checked;
+    try{localStorage.setItem('image-helper-voice',voiceEnabled?'on':'off');}catch(_){}
+    if(!voiceEnabled)window.speechSynthesis?.cancel();
+    else speak(activeWarning?.voice||'语音提醒已开启。需要操作时，请留意界面提示。');
+  };
+  $('repeatAttention').onclick=()=>speak(activeWarning?.voice||'语音提醒已开启。需要操作时，请留意界面提示。');
+  $('viewAttentionTask').onclick=()=>{
+    if(!activeWarning?.task)return;
+    selected=activeWarning.task.request_id;render();persist();
+    $('resultTitle').scrollIntoView({behavior:'smooth',block:'start'});
+  };
+  function error(message) {
+    $('errorMessage').textContent=message||'';$('errorMessage').hidden=!message;
+    inputWarning=message?{key:'input:'+message,text:message,
+      voice:/需要先上传|必须上传/.test(message)?'请上传参考图片。当前工具需要参考图片才能开始。':message}:null;
+    if(inputWarning){announced.delete(inputWarning.key);dismissed.delete(inputWarning.key);}
+    refreshWarning();
+  }
   async function request(path, options={}, timeout=15000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
@@ -72,7 +127,7 @@
       const img=document.createElement('img'); img.src=r.url; img.alt='参考图片 '+(index+1);
       const label=document.createElement('span'); label.textContent=r.file.name;
       const button=document.createElement('button'); button.type='button'; button.className='secondary'; button.textContent='删除第 '+(index+1)+' 张';
-      button.onclick=()=>{ URL.revokeObjectURL(r.url); references=references.filter(x=>x.key!==r.key); referenceChanged(); };
+      button.onclick=()=>{ URL.revokeObjectURL(r.url); references=references.filter(x=>x.key!==r.key); error(''); referenceChanged(); };
       card.append(img,label,button); $('referencePreviews').append(card);
     });
     $('referenceName').textContent = references.length+' / 3 张 · 每张最大 20 MB，可单独删除并重新添加。';
@@ -94,7 +149,7 @@
     $('submitLabel').textContent='提交新任务';
     $('taskList').replaceChildren();
     tasks.slice().reverse().forEach(t=>{
-      const button=document.createElement('button'); button.type='button'; button.className='secondary task-card';
+      const button=document.createElement('button'); button.type='button'; button.className='secondary task-card';button.dataset.status=t.status;
       button.textContent=(t===current()?'● ':'')+(names[t.status]||t.status)+' · '+t.prompt.slice(0,45)+' · '+t.referenceImages.length+' 张参考图';
       button.onclick=()=>{selected=t.request_id; render(); persist();}; $('taskList').append(button);
       if (t.status==='pending' && t.submitError) {
@@ -119,6 +174,7 @@
     $('previewTitle').textContent=t?.status==='not_generated'?'本次未生成图片':t?.status==='error'?'程序执行失败':'等待生成结果';
     $('previewDescription').textContent=t?.error||t?.stage||'选择任务查看各自进度。';
     if(t?.image_url){$('downloadLink').href=t.image_url; $('downloadLink').download=t.image_filename||'生成图片.png';}
+    refreshWarning();
   }
   function enqueueSubmit(t) {
     if(t.submitting || t.id || terminal.has(t.status)) return;
@@ -173,12 +229,12 @@
   function target() {const t=current();return t?.status==='review'?{requestId:t.request_id,version:t.review_version}:null;}
   $('retryDownload').onclick=()=>{const v=target();if(v)decide(v,'retry');};
   $('keepWaiting').onclick=()=>{const v=target();if(v)decide(v,'wait');};
-  $('endGeneration').onclick=()=>{modalTarget=target();if(modalTarget)$('endDialog').showModal();};
+  $('endGeneration').onclick=()=>{modalTarget=target();if(modalTarget){$('endDialog').showModal();speak('请再次确认是否结束本次任务。确认结束后，将停止检测并且不下载图片。');}};
   $('cancelEnd').onclick=()=>{$('endDialog').close();modalTarget=null;};
   $('confirmEnd').onclick=()=>{const v=modalTarget;$('endDialog').close();modalTarget=null;if(v)decide(v,'end',true);};
   $('endDialog').addEventListener('cancel',()=>{modalTarget=null;});
   $('reloadImage').hidden=false; $('reloadImage').onclick=()=>{const t=current();const src=t?.status==='review'?t.preview_url:t?.image_url;if(src)$('resultImage').src=src+(src.includes('?')?'&':'?')+'reload='+Date.now();};
-  $('fabricTool').onchange=()=>{if($('fabricTool').value==='custom' && generatedPreset!==null && $('prompt').value===generatedPreset)$('prompt').value='';generatedPreset=null;render();persist();};
+  $('fabricTool').onchange=()=>{error('');if($('fabricTool').value==='custom' && generatedPreset!==null && $('prompt').value===generatedPreset)$('prompt').value='';generatedPreset=null;render();persist();};
   $('applyPreset').onclick=applyPreset;
   $('prompt').oninput=()=>{generatedPreset=null;render();persist();};
   document.querySelectorAll('.example').forEach(button=>button.onclick=()=>{$('fabricTheme').value=button.dataset.theme;$('fabricTool').value='fabric';applyPreset();});
@@ -228,9 +284,12 @@
       const data=await post('/api/tunnel-heartbeat',{nonce,server_id:heartbeatId});
       if(data.nonce!==nonce||data.server_id!==heartbeatId)throw new Error('连接校验失败');
       $('connectionText').textContent='连接正常';
+      if(connectionWarning){announced.delete('connection-lost');dismissed.delete('connection-lost');}connectionFailures=0;connectionWarning=null;$('connection').classList.remove('offline');refreshWarning();
       if(config.entryOrigin && window.parent!==window)window.parent.postMessage({type:'fabric-app-heartbeat'},config.entryOrigin);
     } catch(e) {
-      $('connectionText').textContent='正在重新连接';
+      $('connectionText').textContent='正在重新连接';$('connection').classList.add('offline');
+      connectionFailures++;
+      if(connectionFailures>=3){connectionWarning={key:'connection-lost',text:'连接暂时出现问题，正在自动恢复。请稍等，不要重复提交任务。',voice:'连接出现问题，正在自动恢复。请稍等，不要重复提交任务。'};refreshWarning();}
       if(e.status===409)try{const data=await request('/api/tunnel-heartbeat');heartbeatId=data.server_id;}catch(_){}
     } finally {heartbeatBusy=false;}
   }
