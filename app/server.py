@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import queue
+import shutil
 import re
 import threading
 import time
@@ -25,8 +26,8 @@ from urllib.parse import urlsplit
 from flask import Flask, jsonify, render_template, request, send_file
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from chatgpt_image_ui import Automation, DEFAULT_CONFIG, enable_dpi, load_config
-from fabric_presets import FABRIC_CATALOG
+from chatgpt_image_ui import NotGenerated, Automation, DEFAULT_CONFIG, enable_dpi, load_config
+from fabric_presets import FABRIC_CATALOG, prepare_prompt
 
 BASE = Path(__file__).resolve().parent
 LOGGER = logging.getLogger("chatgpt_remote_image")
@@ -138,7 +139,7 @@ def validate_config(cfg: dict, config_path: Path) -> None:
 
 
 def desktop_runner(prompt: str, cfg: dict, config_path: Path, log: Callable[[str], None], image_path: Path | None = None, review=None) -> Path:
-    return Automation(cfg, config_path, log=log, review=review).run(prompt, image_path=image_path)
+    return Automation(cfg, config_path, log=log, review=review).run(prompt, image_paths=image_path if isinstance(image_path, (list, tuple)) else ([image_path] if image_path else []))
 
 
 @dataclass
@@ -148,6 +149,10 @@ class Job:
     request_id: str | None = None
     upload_id: str | None = None
     reference: Path | None = None
+    references: tuple = ()
+    upload_ids: tuple = ()
+    tool: str = "custom"
+    original_prompt: str = ""
     status: str = "queued"
     stage: str = "等待本地电脑执行"
     error: str | None = None
@@ -182,23 +187,42 @@ class JobManager:
         for job_id, job in list(self.jobs.items()):
             if excess <= 0:
                 break
-            if job.status not in {"done", "error"}:
+            if job.status not in {"done", "error", "not_generated"}:
                 continue
             del self.jobs[job_id]
             if job.request_id:
                 self.request_ids.pop(job.request_id, None)
             excess -= 1
 
-    def submit(self, prompt: str, request_id: str | None, upload_id: str | None = None, reference: Path | None = None) -> tuple[Job, bool]:
+    def submit(self, prompt: str, request_id: str | None, upload_id: str | None = None, reference: Path | None = None, *, references=None, upload_ids=None, tool="custom", original_prompt=None) -> tuple[Job, bool]:
+        references = tuple(references) if references is not None else ((reference,) if reference else ())
+        upload_ids = tuple(upload_ids) if upload_ids is not None else ((upload_id,) if upload_id else ())
         with self.lock:
             if request_id and request_id in self.request_ids:
                 job = self.jobs[self.request_ids[request_id]]
-                if job.prompt != prompt or job.upload_id != upload_id:
+                if job.prompt != prompt or job.original_prompt != (prompt if original_prompt is None else original_prompt) or job.upload_ids != upload_ids or job.tool != tool:
                     raise ValueError("同一个 request_id 已用于不同提示词或参考图片。")
                 return job, False
             if self.stop.is_set():
                 raise RuntimeError("本地服务器正在停止，请稍后重试。")
             job = Job(id=uuid.uuid4().hex, prompt=prompt, request_id=request_id, upload_id=upload_id, reference=reference)
+            job.references = references
+            job.upload_ids = upload_ids
+            job.tool = tool
+            job.original_prompt = prompt if original_prompt is None else original_prompt
+            if self.queue.full():
+                raise queue.Full()
+            # Private immutable copies: composer edits and upload cleanup cannot change queued jobs.
+            if references:
+                folder = self.config_path.parent / "job-inputs" / job.id
+                folder.mkdir(parents=True, exist_ok=True)
+                copies = []
+                for index, source in enumerate(references):
+                    destination = folder / f"{index + 1}.png"
+                    shutil.copyfile(source, destination)
+                    copies.append(destination)
+                job.references = tuple(copies)
+                job.reference = copies[0]
             # 持锁入队与登记，worker 获取任务后会在同一把锁处等待。
             self.queue.put_nowait(job.id)
             self.jobs[job.id] = job
@@ -212,10 +236,11 @@ class JobManager:
             job = self.jobs.get(job_id)
             if job is None:
                 return None
-            data = {"id": job.id, "status": job.status, "stage": job.stage, "error": job.error}
+            data = {"id": job.id, "taskId": job.id, "prompt": job.original_prompt, "sent_prompt": job.prompt, "tool": job.tool, "referenceImages": list(job.upload_ids), "status": job.status, "stage": job.stage, "error": job.error, "result": None}
             if job.status == "done":
                 data["image_url"] = "/jobs/" + job.id + "/image"
                 data["image_filename"] = job.image_filename
+                data["result"] = data["image_url"]
             elif job.status == "review":
                 data["preview_url"] = "/jobs/" + job.id + "/preview?v=" + str(job.review_version)
                 data["review_version"] = job.review_version
@@ -250,6 +275,8 @@ class JobManager:
             if self.stop.is_set():
                 raise RuntimeError("服务器已停止，远端确认已取消；当前对话保留。")
             action = job.review_action
+            if action == "end":
+                raise NotGenerated("用户确认：本次未生成图片。请修改提示词后重新提交。")
             job.status = "running"
             job.stage = "正在重试当前图片下载" if action == "retry" else "继续等待当前图片生成"
             return action
@@ -270,7 +297,7 @@ class JobManager:
                 if self.validate:
                     validate_config(cfg, self.config_path)
                 log = lambda msg: self._log(job_id, msg)
-                path = Path(self.runner(job.prompt, cfg, self.config_path, log, job.reference,
+                path = Path(self.runner(job.prompt, cfg, self.config_path, log, (job.references if len(job.references) > 1 else job.reference),
                                         lambda preview, message: self.request_review(job_id, preview, message)))
                 path = path.expanduser().resolve()
                 if not path.is_file() or path.stat().st_size == 0:
@@ -293,6 +320,12 @@ class JobManager:
                     job.image_filename = filename
                     job.status = "done"
                     job.stage = "图片已生成，原图已下载，可查看和保存"
+            except NotGenerated as exc:
+                with self.lock:
+                    job = self.jobs[job_id]
+                    job.status = "not_generated"
+                    job.stage = str(exc)
+                    job.error = None
             except Exception as exc:
                 LOGGER.exception("任务 %s 执行失败", job_id)
                 with self.lock:
@@ -335,7 +368,7 @@ def make_app(
         validate_config(load_config(config_path), config_path)
         if not (BASE / "templates" / "index.html").is_file():
             raise RuntimeError("缺少 templates/index.html，请把前端文件放回完整项目目录。")
-    app = Flask(__name__, template_folder=str(BASE / "templates"), static_folder=None)
+    app = Flask(__name__, template_folder=str(BASE / "templates"), static_folder=str(BASE / "static"))
     app.json.ensure_ascii = False
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
     uploads = Path(upload_dir).resolve() if upload_dir is not None else config_path.parent / "uploads"
@@ -421,7 +454,7 @@ def make_app(
         prompt = body.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             return jsonify(error="请输入画图提示词。"), 400
-        prompt = prompt.strip()
+        # Custom mode preserves whitespace exactly; strip only for validation.
         if len(prompt) > 10000:
             return jsonify(error="提示词最长 10000 个字符。"), 400
         request_id = body.get("request_id")
@@ -429,22 +462,25 @@ def make_app(
             if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
                 return jsonify(error="request_id 必须是长度 1 至 128 的字符串。"), 400
             request_id = request_id.strip()
-        upload_id = body.get("upload_id")
-        reference = None
-        if upload_id is not None:
-            if not isinstance(upload_id, str) or not re.fullmatch(r"[0-9a-f]{32}", upload_id):
-                return jsonify(error="参考图片编号无效，请重新上传。"), 400
-            reference = uploads / (upload_id + ".png")
-            if not reference.is_file():
-                return jsonify(error="参考图片不存在，请重新上传。"), 400
-        tool_id = body.get("tool", "fabric")
+        upload_ids = body.get("upload_ids", [body["upload_id"]] if body.get("upload_id") is not None else [])
+        if not isinstance(upload_ids, list) or len(upload_ids) > 3:
+            return jsonify(error="每个任务最多上传 3 张参考图片。"), 400
+        if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{32}", value) for value in upload_ids) or len(set(upload_ids)) != len(upload_ids):
+            return jsonify(error="参考图片编号无效或重复，请重新上传。"), 400
+        references = [uploads / (value + ".png") for value in upload_ids]
+        if any(not path.is_file() for path in references):
+            return jsonify(error="参考图片不存在，请重新上传。"), 400
+        reference = references[0] if references else None
+        upload_id = upload_ids[0] if upload_ids else None
+        tool_id = body.get("tool", "custom")
         tool = next((item for item in FABRIC_CATALOG["tools"] if item["id"] == tool_id), None)
         if tool is None:
             return jsonify(error="设计工具预设无效。"), 400
         if tool["requires_reference"] and reference is None:
             return jsonify(error="此工具预设需要先上传参考图片。"), 400
         try:
-            job, created = manager.submit(prompt, request_id, upload_id, reference)
+            final_prompt = prepare_prompt(prompt, tool_id, bool(references))
+            job, created = manager.submit(final_prompt, request_id, upload_id, reference, references=references, upload_ids=upload_ids, tool=tool_id, original_prompt=prompt)
         except ValueError as exc:
             return jsonify(error=str(exc)), 409
         except queue.Full:
@@ -476,8 +512,10 @@ def make_app(
     @app.post("/jobs/<job_id>/review")
     def review_job(job_id: str):
         body = request.get_json(silent=True)
-        if not isinstance(body, dict) or not isinstance(body.get("action"), str) or body["action"] not in {"retry", "wait"}:
-            return jsonify(error="请选择重试下载或继续等待。"), 400
+        if not isinstance(body, dict) or not isinstance(body.get("action"), str) or body["action"] not in {"retry", "wait", "end"}:
+            return jsonify(error="请选择已经生成、继续等待或生成已结束。"), 400
+        if body["action"] == "end" and body.get("confirmed") is not True:
+            return jsonify(error="结束任务需要二次确认。"), 400
         with manager.review_changed:
             job = manager.jobs.get(job_id)
             if job is None:

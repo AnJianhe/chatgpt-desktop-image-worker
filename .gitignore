@@ -30,3 +30,6 @@ logs/
 portal/wrangler.jsonc
 portal/.openai/hosting.json
 verification/*.log
+
+app/job-inputs/
+job-inputs/

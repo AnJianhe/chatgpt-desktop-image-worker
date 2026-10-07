@@ -1,6 +1,7 @@
 """网页和本机界面共用的布料花型提示词。"""
 FABRIC_CATALOG = {
     "tools": [
+        {"id": "custom", "label": "自定义提示词", "instruction": "", "requires_reference": False},
         {"id": "fabric", "label": "布料花型设计", "instruction": "", "requires_reference": False},
         {"id": "extract", "label": "花型提取／印花提取", "requires_reference": True, "instruction": "从上传的布料、服装或家纺照片中提取印花纹样。只保留原图中的花朵、枝叶、几何纹样或其他印花元素，忠实保留造型、线条与配色。去掉布料底色、经纬布纹、纤维肌理、褶皱、光照阴影、服装轮廓、人物及背景；校正透视，使纹样平整正视。恢复被轻微褶皱干扰的线条，尽量完整提取可见元素，不随意改变花型。输出清晰干净的平面纹样图，要求透明背景 PNG，无文字、水印、边框或产品展示。"},
         {"id": "seamless", "label": "四方连续图", "requires_reference": False, "instruction": "根据参考图或文字设计四方连续图。保留主要纹样、配色与风格，重新排列为一个正方形循环单元；左右边缘、上下边缘必须准确对应续接，四个角衔接自然，重复平铺后没有明显接缝。只输出一个可平铺的单元，不输出四宫格、网格演示、服装效果图或标注。"},
@@ -46,11 +47,39 @@ FABRIC_CATALOG = {
 }
 
 
-def make_fabric_prompt(layout="four_way", theme="ditsy", palette=None, tool="fabric"):
+def make_fabric_prompt(layout="four_way", theme="ditsy", palette=None, tool="fabric", has_reference=False):
     tool_item = next(item for item in FABRIC_CATALOG["tools"] if item["id"] == tool)
+    if tool == "custom":
+        return ""
     if tool != "fabric":
-        return tool_item["instruction"] + "\n\n补充要求（可填写颜色、风格、纹样大小、疏密或处理范围）："
+        return condition_prompt(tool_item["instruction"], has_reference) + "\n\n补充要求（可填写颜色、风格、纹样大小、疏密或处理范围）："
     layout_item = next(item for item in FABRIC_CATALOG["layouts"] if item["id"] == layout)
     theme_item = next(item for item in FABRIC_CATALOG["themes"] if item["id"] == theme)
     palette = palette or FABRIC_CATALOG["palettes"][0]
-    return "\n\n".join((layout_item["instruction"], "纹样主题：" + theme_item["instruction"], "配色：" + palette + "。", FABRIC_CATALOG["base"], FABRIC_CATALOG["reference"]))
+    return condition_prompt("\n\n".join((layout_item["instruction"], "纹样主题：" + theme_item["instruction"], "配色：" + palette + "。", FABRIC_CATALOG["base"], FABRIC_CATALOG["reference"])), has_reference)
+
+
+def condition_prompt(prompt, has_reference):
+    """Resolve known conditional templates before sending; never used for custom mode."""
+    import re
+    prompt = re.sub(r"沿用参考(?:图片|图)(?:的)?配色[；;]\s*(?:无|没有)参考(?:图片|图)时[，,:：]?\s*([^。\n]+)",
+                    "沿用参考图配色" if has_reference else r"\1", prompt)
+    if not has_reference:
+        prompt = prompt.replace(FABRIC_CATALOG["reference"], "")
+        prompt = prompt.replace("根据参考图或文字设计四方连续图。保留主要纹样、配色与风格，", "根据文字设计四方连续图。采用协调自然的纹样、配色与风格，")
+        prompt = prompt.replace(FABRIC_CATALOG["themes"][-1]["instruction"], "根据文字要求原创纹样，造型清晰，配色协调，重新组织排布。")
+    return prompt.strip()
+
+
+def prepare_prompt(prompt, tool, has_reference):
+    if tool == "custom":
+        return prompt  # Preserve every character; no business or reference instructions.
+    item = next((row for row in FABRIC_CATALOG["tools"] if row["id"] == tool), None)
+    if item is None:
+        raise ValueError("设计工具预设无效。")
+    if item["requires_reference"] and not has_reference:
+        raise ValueError("此工具预设需要先上传参考图片。")
+    result = condition_prompt(prompt, has_reference)
+    if not has_reference:
+        result += "\n\n本次任务没有输入图片。直接根据文字要求生成图片；涉及输入图片的条件分支不适用，采用给出的无图方案，未指定时自主采用协调自然配色。不要索要图片或提问，直接开始图片生成。"
+    return result

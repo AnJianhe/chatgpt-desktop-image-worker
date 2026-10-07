@@ -40,6 +40,10 @@ DEFAULTS = {
 }
 
 
+class NotGenerated(Exception):
+    """Human confirmed that no image was produced; not an automation failure."""
+
+
 class Cancelled(Exception):
     pass
 
@@ -802,6 +806,8 @@ class Automation:
         if callback is None:
             raise DownloadMenuNotFound(message + " 截图已保存：" + str(preview) + "；远端确认功能请通过 server.py 使用。")
         action = callback(preview, message)
+        if action == "end":
+            raise NotGenerated("用户确认：本次未生成图片。请检查提示词后重新提交。")
         if action not in {"retry", "wait"}:
             raise Cancelled("远端确认已停止。")
         # 暂停期间不操控窗口；收到远端选择后重新激活并读取当前画面。
@@ -810,7 +816,10 @@ class Automation:
         self.assert_target()
         return action
 
-    def run(self, prompt: str, image_path: Path | None = None) -> Path:
+    def run(self, prompt: str, image_path: Path | None = None, image_paths=None) -> Path:
+        references = tuple(image_paths) if image_paths is not None else ((image_path,) if image_path is not None else ())
+        if len(references) > 3:
+            raise ValueError("每个任务最多 3 张参考图片。")
         if not prompt.strip():
             raise ValueError("请输入画图提示词。")
         for key in ("new_chat", "input", "send"):
@@ -836,15 +845,15 @@ class Automation:
         self.prepare()
         self.log("打开新对话……")
         self.new_chat(marker)
-        if image_path is not None:
-            self.log("粘贴远端上传的参考图片……")
-            self.paste_reference(Path(image_path))
+        for index, reference in enumerate(references, 1):
+            self.log(f"粘贴参考图片 {index}/{len(references)}……")
+            self.paste_reference(Path(reference))
         self.log("粘贴提示词并点击发送……")
         self.clipboard.copy(prompt)
         self.click("input")
         self.pag.hotkey("ctrl", "v")
         self.sleep(0.8)
-        self.send(timeout=60) if image_path is not None else self.send()
+        self.send(timeout=60) if references else self.send()
         self.log("持续滚到最新内容，等待图片专属完成标记并确认画面稳定……")
         try:
             screenshot = self.wait_done(marker, output=output)
@@ -878,7 +887,7 @@ def gui(config_path):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
     from tkinter.scrolledtext import ScrolledText
-    from fabric_presets import FABRIC_CATALOG, make_fabric_prompt
+    from fabric_presets import FABRIC_CATALOG, make_fabric_prompt, prepare_prompt
 
     cfg = load_config(config_path)
     root = tk.Tk()
@@ -1074,7 +1083,7 @@ def gui(config_path):
     ttk.Label(preset_row, text="布料预设").pack(side="left", padx=(0, 8))
     tool_select = ttk.Combobox(preset_row, values=[item["label"] for item in FABRIC_CATALOG["tools"]], state="readonly", width=22)
     tool_select.pack(side="left", padx=(0, 8))
-    tool_select.current(0)
+    tool_select.current(next(i for i, item in enumerate(FABRIC_CATALOG["tools"]) if item["id"] == "fabric"))
     layout_select = ttk.Combobox(preset_row, values=[item["label"] for item in FABRIC_CATALOG["layouts"]], state="readonly", width=24)
     layout_select.pack(side="left", padx=(0, 8))
     layout_select.current(0)
@@ -1084,7 +1093,7 @@ def gui(config_path):
     def fill_fabric_preset():
         if busy[0]:
             return
-        text = make_fabric_prompt(FABRIC_CATALOG["layouts"][layout_select.current()]["id"], FABRIC_CATALOG["themes"][theme_select.current()]["id"], tool=FABRIC_CATALOG["tools"][tool_select.current()]["id"])
+        text = make_fabric_prompt(FABRIC_CATALOG["layouts"][layout_select.current()]["id"], FABRIC_CATALOG["themes"][theme_select.current()]["id"], tool=FABRIC_CATALOG["tools"][tool_select.current()]["id"], has_reference=bool(image_var.get().strip()))
         prompt.delete("1.0", "end")
         prompt.insert("1.0", text)
     preset_button = ttk.Button(preset_row, text="填入预设", command=fill_fabric_preset)
@@ -1109,8 +1118,8 @@ def gui(config_path):
     controls.pack(fill="x")
 
     def run():
-        text = prompt.get("1.0", "end-1c").strip()
-        if not text:
+        text = prompt.get("1.0", "end-1c")
+        if not text.strip():
             messagebox.showerror("提示词为空", "请输入画图提示词。", parent=root)
             return
         reference = image_var.get().strip()
@@ -1121,6 +1130,7 @@ def gui(config_path):
         if reference and not Path(reference).is_file():
             messagebox.showerror("图片不存在", "请重新选择参考图片。", parent=root)
             return
+        text = prepare_prompt(text, tool["id"], bool(reference))
         start_job(lambda auto: auto.run(text, image_path=Path(reference) if reference else None))
 
     for text, command in (("开始生成并下载", run), ("打开 ChatGPT", lambda: start_job(lambda a: a.prepare()))):
@@ -1279,7 +1289,7 @@ def gui(config_path):
 
     root.protocol("WM_DELETE_WINDOW", close)
     status()
-    log("首次使用：校准三个位置，截取图片完成标记，并自行截取“下载副本”菜单标记。")
+    log("首次使用：校准三个位置，截取图片左下“编辑”完成标记；下载菜单已附带，必要时可重选。")
     root.after(100, drain)
     root.mainloop()
 

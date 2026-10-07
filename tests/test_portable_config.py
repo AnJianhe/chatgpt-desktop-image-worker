@@ -29,7 +29,7 @@ class PortableConfigTests(unittest.TestCase):
                 app = make_app(config_path=Path(folder)/"config.json", validate_startup=False, entry_origin=configured)
                 try:
                     html = app.test_client().get("/").get_data(as_text=True)
-                    self.assertIn("const entryOrigin = " + json.dumps(expected) + ";", html)
+                    self.assertIn("entryOrigin:" + json.dumps(expected), html)
                 finally:
                     app.extensions["job_manager"].close()
 

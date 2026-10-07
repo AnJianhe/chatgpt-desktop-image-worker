@@ -85,7 +85,7 @@
     footer { border-top:1px solid var(--line); padding:20px 0 26px; color:#9aa6b8; font-size:11px; }
     @media (max-width:760px) { .shell { padding:0 18px; } header { min-height:77px; } .hero { padding:19px 0 25px; } .layout { grid-template-columns:1fr; gap:18px; padding-bottom:30px; } .composer { padding:22px; } textarea { min-height:190px; } .result-head { padding:21px 21px 17px; } .preview { margin:0 21px; min-height:250px; } .details { padding:19px 21px 22px; } .result-actions { padding:14px 21px 0; } }
     @media (max-width:380px) { .connection { font-size:10px; } .brand { font-size:17px; } .input-meta span:first-child { display:none; } }
-  </style>
+  .reference-card {display:inline-flex;flex-direction:column;width:30%;padding:6px;vertical-align:top;overflow-wrap:anywhere}.reference-card img {max-width:100%;height:110px;object-fit:contain}.task-card {text-align:left} dialog::backdrop {background:#0006}</style>
 </head>
 <body>
   <div class="shell">
@@ -117,9 +117,9 @@
           <div class="input-meta"><span>支持中文与多行描述</span><span id="characterCount">0 字</span></div>
           <div class="reference">
             <label for="referenceFile">参考图片（可选）</label>
-            <input id="referenceFile" type="file" accept="image/png,image/jpeg,image/webp">
-            <p id="referenceName">支持一张 PNG、JPEG 或 WEBP，最大 20 MB。选择图片后，在提示词中描述修改要求。</p>
-            <img id="referencePreview" alt="选中的参考图片" hidden>
+            <input id="referenceFile" type="file" multiple accept="image/png,image/jpeg,image/webp">
+            <p id="referenceName">支持 0～3 张 PNG、JPEG 或 WEBP，每张最大 20 MB。</p>
+            <div id="referencePreviews"></div>
             <button id="removeReference" type="button" class="secondary" hidden>移除图片</button>
           </div>
           <div class="examples" aria-label="示例提示词">
@@ -129,11 +129,11 @@
             <button type="button" class="example" data-theme="reference">参考图再设计</button>
           </div>
           <button id="submitButton" class="primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"/></svg><span id="submitLabel">开始生成</span></button>
-          <p class="hint">任务进行中请稍候，刷新本页也能继续查看。</p>
+          <p class="hint">提交后可立即继续创建任务。桌面操作按顺序执行，各任务互不影响。</p>
         </form>
       </section>
       <section class="card" aria-labelledby="resultTitle">
-        <div class="result-head"><h2 id="resultTitle" class="card-title">生成结果</h2><span id="statusBadge" class="badge" data-status="idle">等待任务</span></div>
+        <div id="taskList" aria-label="任务历史" style="padding:20px;display:grid;gap:8px"></div><div class="result-head"><h2 id="resultTitle" class="card-title">生成结果</h2><span id="statusBadge" class="badge" data-status="idle">等待任务</span></div>
         <div id="preview" class="preview">
           <div id="placeholder" class="placeholder">
             <div class="placeholder-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="5" width="24" height="22" rx="4"/><circle cx="11" cy="12" r="2.5"/><path d="m5 23 7-7 5 5 4-5 6 7"/></svg></div>
@@ -146,8 +146,8 @@
           <a id="downloadLink" class="secondary" download><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 3v9m-4-4 4 4 4-4M4 13v4h12v-4"/></svg>下载原图</a>
         </div>
         <div id="reviewActions" class="result-actions" hidden>
-          <button id="retryDownload" type="button" class="secondary">已生成，直接下载</button>
-          <button id="keepWaiting" type="button" class="secondary">未生成，继续识别</button>
+          <button id="retryDownload" type="button" class="secondary">已经生成</button>
+          <button id="keepWaiting" type="button" class="secondary">继续等待</button><button id="endGeneration" type="button" class="secondary">生成已结束</button>
         </div>
         <div class="details" aria-live="polite" aria-atomic="false">
           <div class="stage-row"><p id="stageText">准备好后，点击「开始生成」。</p><span id="queueText" hidden></span></div>
@@ -160,468 +160,15 @@
     </main>
     <footer>生成完成后可下载原图，或继续描述下一幅画面。</footer>
   </div>
-  <script>
-    'use strict';
-    const storageKey = 'image-helper-current-task-v1';
-    const elements = Object.fromEntries(['fabricTool','toolHint','fabricLayout','fabricTheme','fabricPalette','applyPreset','reviewActions','retryDownload','keepWaiting','referenceFile','referenceName','referencePreview','removeReference','promptForm','prompt','characterCount','submitButton','submitLabel','statusBadge','preview','placeholder','previewTitle','previewDescription','resultImage','resultActions','reloadImage','downloadLink','stageText','queueText','errorMessage','networkMessage','stageLog','taskId','connection','connectionText'].map(id => [id, document.getElementById(id)]));
-    const fabricCatalog = {{ fabric_catalog | tojson }};
-    let heartbeatServerId = {{ heartbeat_server_id | tojson }};
-    let heartbeatInFlight = false;
-    const entryOrigin = {{ entry_origin | tojson }};
-    let entryReady = window.parent === window;
-    [['fabricTool',fabricCatalog.tools],['fabricLayout',fabricCatalog.layouts],['fabricTheme',fabricCatalog.themes]].forEach(([id, rows]) => {
-      rows.forEach(row => elements[id].add(new Option(row.label, row.id)));
-    });
-    fabricCatalog.palettes.forEach(palette => elements.fabricPalette.add(new Option(palette, palette)));
-    const statusNames = { idle:'等待任务', pending:'正在提交', queued:'等待中', running:'生成中', review:'请确认截图', done:'已完成', error:'未完成' };
-    let state = { id:null, status:'idle', prompt:'', pending:null, logs:[], stage:'', error:'', imageFilename:'' };
-    let submitting = false;
-    let pollTimer = null;
-    let pollInFlight = false;
-    let networkFailures = 0;
-    let imageJobId = null;
-    let referenceFile = null;
-    let referenceURL = null;
-    let referenceUploadId = null;
-    let reviewing = false;
-    function applyFabricPreset(themeId) {
-      if (themeId) { elements.fabricTheme.value = themeId; elements.fabricTool.value = 'fabric'; }
-      const tool = fabricCatalog.tools.find(item => item.id === elements.fabricTool.value);
-      const layout = fabricCatalog.layouts.find(item => item.id === elements.fabricLayout.value);
-      const theme = fabricCatalog.themes.find(item => item.id === elements.fabricTheme.value);
-      elements.prompt.value = tool.id === 'fabric'
-        ? [layout.instruction, '纹样主题：' + theme.instruction, '配色：' + elements.fabricPalette.value + '。', fabricCatalog.base, fabricCatalog.reference].join('\n\n')
-        : tool.instruction + '\n\n补充要求（可填写颜色、风格、纹样大小、疏密或处理范围）：';
-      state.prompt = elements.prompt.value;
-      render();
-      saveState();
-    }
-    elements.applyPreset.addEventListener('click', () => applyFabricPreset());
-    elements.fabricTool.addEventListener('change', () => render());
-
-    function clearReference(keepInput = false) {
-      if (referenceURL) URL.revokeObjectURL(referenceURL);
-      referenceFile = referenceURL = referenceUploadId = null;
-      if (!keepInput) elements.referenceFile.value = '';
-      elements.referencePreview.removeAttribute('src');
-      elements.referencePreview.hidden = true;
-      elements.removeReference.hidden = true;
-      elements.referenceName.textContent = '支持一张 PNG、JPEG 或 WEBP，最大 20 MB。选择图片后，在提示词中描述修改要求。';
-    }
-    elements.removeReference.addEventListener('click', () => clearReference());
-    elements.referenceFile.addEventListener('change', () => {
-      const selected = elements.referenceFile.files[0];
-      clearReference(true);
-      if (!selected) return;
-      if (selected.size > 20 * 1024 * 1024 || !['image/png','image/jpeg','image/webp'].includes(selected.type)) {
-        state.error = '请选择不超过 20 MB 的 PNG、JPEG 或 WEBP 图片。';
-        render();
-        return;
-      }
-      state.error = '';
-      referenceFile = selected;
-      referenceURL = URL.createObjectURL(selected);
-      elements.referencePreview.src = referenceURL;
-      elements.referencePreview.hidden = false;
-      elements.removeReference.hidden = false;
-      elements.referenceName.textContent = selected.name + ' · ' + (selected.size / 1024 / 1024).toFixed(2) + ' MB';
-      render();
-    });
-
-    function saveState() {
-      try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch (_) { /* Storage may be unavailable; the current page still works. */ }
-      if (entryReady && entryOrigin && window.parent !== window) window.parent.postMessage({type:'fabric-task-state',state}, entryOrigin);
-    }
-    function setNetwork(message) {
-      elements.networkMessage.textContent = message || '';
-      elements.networkMessage.hidden = !message;
-      elements.connection.classList.toggle('offline', Boolean(message));
-      elements.connectionText.textContent = message ? '正在重新连接' : state.id || submitting ? '连接正常' : '准备就绪';
-    }
-    function addLog(message) {
-      if (!message || state.logs.at(-1)?.message === message) return;
-      state.logs.push({ message:String(message), time:Date.now() });
-      if (state.logs.length > 40) state.logs.shift();
-      renderLogs();
-    }
-    function renderLogs() {
-      elements.stageLog.replaceChildren();
-      state.logs.forEach(entry => {
-        const li = document.createElement('li');
-        const time = document.createElement('time');
-        time.dateTime = new Date(entry.time).toISOString();
-        time.textContent = new Date(entry.time).toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
-        const text = document.createElement('span');
-        text.textContent = entry.message;
-        li.append(time, text);
-        elements.stageLog.append(li);
-      });
-      elements.stageLog.hidden = !state.logs.length;
-      elements.stageLog.scrollTop = elements.stageLog.scrollHeight;
-    }
-    function render() {
-      const busy = state.status === 'queued' || state.status === 'running' || state.status === 'review';
-      const locked = busy || submitting || Boolean(state.pending);
-      elements.prompt.disabled = locked;
-      elements.referenceFile.disabled = locked;
-      elements.removeReference.disabled = locked;
-      ['fabricTool','fabricLayout','fabricTheme','fabricPalette','applyPreset'].forEach(id => { elements[id].disabled = locked; });
-      const tool = fabricCatalog.tools.find(item => item.id === elements.fabricTool.value);
-      document.querySelector('.preset-grid').hidden = tool.id !== 'fabric';
-      elements.toolHint.textContent = tool.id === 'fabric' ? '按连续方式和花型主题设计布料。' : tool.requires_reference ? '先上传一张参考图，再填入此预设并补充处理要求。' : '按参考图片或文字设计无缝循环单元。';
-      elements.reviewActions.hidden = state.status !== 'review';
-      elements.retryDownload.disabled = reviewing;
-      elements.keepWaiting.disabled = reviewing;
-      document.querySelectorAll('.example').forEach(button => { button.disabled = locked; });
-      elements.submitButton.disabled = busy || submitting || (!state.pending && !elements.prompt.value.trim());
-      elements.submitLabel.textContent = submitting ? '正在提交…' : busy ? '任务进行中…' : state.pending ? '恢复连接，继续本次任务' : '开始生成';
-      elements.statusBadge.dataset.status = state.status;
-      elements.statusBadge.textContent = statusNames[state.status] || '等待任务';
-      elements.characterCount.textContent = Array.from(elements.prompt.value).length + ' 字';
-      elements.preview.classList.toggle('busy', busy || submitting);
-      elements.errorMessage.textContent = state.error || '';
-      elements.errorMessage.hidden = !state.error;
-      elements.taskId.textContent = state.id ? '任务编号 ' + state.id : '';
-      elements.taskId.hidden = !state.id;
-      const defaults = {
-        idle:['画面从你的想象开始','提交提示词后，生成原图会显示在这里。'],
-        pending:['正在送出你的想法','连接恢复后会继续同一次提交。'],
-        queued:['你的画面正在等待','轮到这次任务时，会自动开始生成。'],
-        running:['正在把想象变成画面','生成可能需要几分钟，你可以留在这里查看进度。'],
-        review:['请查看当前画面','已经生成图片就重试下载，还没生成就继续等待。'],
-        done:['正在加载生成原图','图片已生成，原图加载后会显示在这里。'],
-        error:['这次没有完成','查看下方说明，调整后可以重新尝试。']
-      };
-      const [title, description] = defaults[state.status] || defaults.idle;
-      elements.previewTitle.textContent = title;
-      elements.previewDescription.textContent = description;
-      elements.stageText.textContent = state.stage || (state.status === 'idle' ? '准备好后，点击「开始生成」。' : statusNames[state.status]);
-    }
-    function resetImage() {
-      imageJobId = null;
-      elements.resultImage.hidden = true;
-      elements.resultImage.removeAttribute('src');
-      elements.placeholder.hidden = false;
-      elements.resultActions.hidden = true;
-      elements.reviewActions.hidden = true;
-      elements.reloadImage.hidden = true;
-      elements.queueText.hidden = true;
-    }
-    function imagePath() { return '/jobs/' + encodeURIComponent(state.id) + '/image'; }
-    function showImage(force = false) {
-      if (!state.id || (imageJobId === state.id && !force)) return;
-      imageJobId = state.id;
-      elements.resultActions.hidden = false;
-      elements.downloadLink.href = imagePath();
-      if (state.imageFilename) elements.downloadLink.download = state.imageFilename;
-      else elements.downloadLink.removeAttribute('download');
-      elements.resultImage.src = imagePath() + (force ? '?reload=' + Date.now() : '');
-    }
-    function showReviewImage(force = false) {
-      if (!state.id || !state.previewURL) return;
-      const key = state.id + ':review:' + state.reviewVersion;
-      if (imageJobId === key && !force) return;
-      imageJobId = key;
-      elements.resultImage.hidden = true;
-      elements.placeholder.hidden = false;
-      elements.downloadLink.hidden = true;
-      elements.resultActions.hidden = true;
-      elements.reloadImage.hidden = true;
-      elements.resultImage.src = state.previewURL + (force ? '&reload=' + Date.now() : '');
-    }
-    elements.resultImage.addEventListener('load', () => {
-      if (!imageJobId?.startsWith(state.id) || !['done','review'].includes(state.status)) return;
-      elements.resultImage.hidden = false;
-      elements.placeholder.hidden = true;
-      elements.reloadImage.hidden = true;
-    });
-    elements.resultImage.addEventListener('error', () => {
-      if (!imageJobId) return;
-      elements.resultImage.hidden = true;
-      elements.placeholder.hidden = false;
-      elements.previewTitle.textContent = state.status === 'review' ? '确认截图暂时没有加载出来' : '原图暂时没有加载出来';
-      elements.previewDescription.textContent = '连接恢复后，点击重新加载继续查看。';
-      elements.resultActions.hidden = false;
-      elements.reloadImage.hidden = false;
-    });
-    elements.reloadImage.addEventListener('click', () => state.status === 'review' ? showReviewImage(true) : showImage(true));
-    async function reviewAction(action) {
-      if (reviewing || state.status !== 'review') return;
-      reviewing = true;
-      render();
-      try {
-        await requestJSON('/jobs/' + encodeURIComponent(state.id) + '/review', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({ action, version:state.reviewVersion })
-        });
-        state.status = 'running';
-        state.error = '';
-        state.stage = action === 'retry' ? '正在重试当前图片下载' : '继续等待当前图片生成';
-        addLog(state.stage);
-        resetImage();
-        setNetwork('');
-        saveState();
-      } catch (error) {
-        if (error.status !== 409) state.error = error.message;
-      } finally {
-        reviewing = false;
-        render();
-        schedulePoll(0);
-      }
-    }
-    elements.retryDownload.addEventListener('click', () => reviewAction('retry'));
-    elements.keepWaiting.addEventListener('click', () => reviewAction('wait'));
-
-    async function requestJSON(path, options = {}, timeout = 15000) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
-      try {
-        const response = await fetch(path, { ...options, signal:controller.signal, cache:'no-store', credentials:'same-origin' });
-        let data;
-        try { data = await response.json(); }
-        catch (_) { throw new Error('暂时未收到完整回应'); }
-        if (!response.ok) {
-          const error = new Error(typeof data.error === 'string' ? data.error : '请求未完成，请稍后再试');
-          error.status = response.status;
-          error.retryable = response.status >= 500 || response.status === 408 || response.status === 429;
-          throw error;
-        }
-        return data;
-      } catch (error) {
-        if (controller.signal.aborted) throw new Error('连接超时');
-        throw error;
-      } finally { clearTimeout(timer); }
-    }
-    function requestId() {
-      if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
-      const bytes = new Uint8Array(16);
-      if (globalThis.crypto?.getRandomValues) crypto.getRandomValues(bytes);
-      else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-      return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('') + '-' + Date.now().toString(36);
-    }
-    async function sendHeartbeat() {
-      if (heartbeatInFlight) return;
-      heartbeatInFlight = true;
-      const nonce = requestId();
-      try {
-        const data = await requestJSON('/api/tunnel-heartbeat', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({server_id:heartbeatServerId, nonce})
-        }, 4000);
-        if (data.status !== 'ok' || data.nonce !== nonce || data.server_id !== heartbeatServerId) throw new Error('连接检查失败');
-        if (entryOrigin && window.parent !== window) window.parent.postMessage({type:'fabric-app-heartbeat'}, entryOrigin);
-        if (!state.id && !submitting && elements.networkMessage.hidden) elements.connectionText.textContent = '连接正常';
-      } catch (error) {
-        if (error.status === 409) {
-          try {
-            const fresh = await requestJSON('/api/tunnel-heartbeat', {}, 4000);
-            if (fresh.status === 'ok' && typeof fresh.server_id === 'string') heartbeatServerId = fresh.server_id;
-          } catch (_) { /* Next heartbeat retries without resubmitting a drawing task. */ }
-        }
-        if (!state.id && !submitting && elements.networkMessage.hidden) elements.connectionText.textContent = '正在重新连接';
-      } finally { heartbeatInFlight = false; }
-    }
-    const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-
-    async function submitPending() {
-      if (submitting || !state.pending) return;
-      submitting = true;
-      state.status = 'pending';
-      state.error = '';
-      state.stage = '正在提交提示词';
-      setNetwork('');
-      render();
-      saveState();
-      try {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            if (state.pending.needs_image && !state.pending.upload_id) {
-              if (!referenceFile) {
-                const error = new Error('页面刷新后尚未上传的图片需要重新选择，请选择图片后重新提交。');
-                error.retryable = false;
-                throw error;
-              }
-              state.stage = '正在上传参考图片';
-              render();
-              const form = new FormData();
-              form.append('image', referenceFile);
-              form.append('upload_id', state.pending.image_upload_id);
-              const uploaded = await requestJSON('/uploads', { method:'POST', body:form }, 120000);
-              state.pending.upload_id = uploaded.upload_id;
-              referenceUploadId = uploaded.upload_id;
-              saveState();
-              addLog('参考图片已上传');
-            }
-            const data = await requestJSON('/jobs', {
-              method:'POST', headers:{ 'Content-Type':'application/json', 'Accept':'application/json' },
-              body:JSON.stringify(state.pending)
-            });
-            if (data.id === undefined || data.id === null || !String(data.id).trim()) throw new Error('未收到任务编号');
-            state.id = String(data.id);
-            state.pending = null;
-            state.status = ['queued','running','review','done','error'].includes(data.status) ? data.status : 'queued';
-            state.stage = '创作请求已收到，正在获取任务进度';
-            addLog('创作请求已收到');
-            setNetwork('');
-            saveState();
-            schedulePoll(0);
-            return;
-          } catch (error) {
-            if (error.retryable === false) {
-              state.pending = null;
-              state.status = 'error';
-              state.error = error.message;
-              state.stage = '任务未能提交';
-              addLog('任务未能提交');
-              setNetwork('');
-              return;
-            }
-            setNetwork(attempt < 2 ? '连接暂时中断，正在继续本次提交…' : '暂时无法连接。点击左侧按钮，继续本次任务。');
-            if (attempt < 2) await delay(2000 * (attempt + 1));
-          }
-        }
-        state.stage = '等待恢复连接';
-      } finally {
-        submitting = false;
-        render();
-        saveState();
-      }
-    }
-    function schedulePoll(milliseconds) {
-      clearTimeout(pollTimer);
-      pollTimer = setTimeout(pollJob, milliseconds);
-    }
-    async function pollJob() {
-      if (!state.id || pollInFlight) return;
-      pollInFlight = true;
-      let continuePolling = true;
-      let nextDelay = 800;
-      const expectedId = state.id;
-      try {
-        const data = await requestJSON('/jobs/' + encodeURIComponent(expectedId), { headers:{ 'Accept':'application/json' } });
-        if (state.id !== expectedId) return;
-        if (!['queued','running','review','done','error'].includes(data.status)) throw new Error('暂时未收到任务进度');
-        networkFailures = 0;
-        setNetwork('');
-        const previousStatus = state.status;
-        state.status = data.status;
-        if (previousStatus === 'review' && data.status === 'running') resetImage();
-        state.previewURL = typeof data.preview_url === 'string' ? data.preview_url : '';
-        state.reviewVersion = Number(data.review_version) || 0;
-        const defaultStages = { queued:'任务正在等待', running:'正在生成图片', done:'生成完成，原图已保存', error:'任务未完成' };
-        const stage = typeof data.stage === 'string' && data.stage.trim() ? data.stage : defaultStages[data.status];
-        if (stage !== state.stage) addLog(stage);
-        state.stage = stage;
-        state.error = typeof data.error === 'string' ? data.error : '';
-        state.imageFilename = typeof data.image_filename === 'string' ? data.image_filename : '';
-        const position = Number(data.queue_position);
-        const hasPosition = data.status === 'queued' && data.queue_position !== null && data.queue_position !== undefined && Number.isFinite(position);
-        elements.queueText.hidden = !hasPosition;
-        elements.queueText.textContent = hasPosition ? '排队位置 ' + position : '';
-        render();
-        saveState();
-        if (data.status === 'review') showReviewImage();
-        if (data.status === 'done') elements.downloadLink.hidden = false;
-        if (data.status === 'done') { showImage(); continuePolling = false; }
-        if (data.status === 'error') continuePolling = false;
-      } catch (error) {
-        if (state.id !== expectedId) return;
-        if (error.status === 404 || error.status === 410) {
-          state.status = 'error';
-          state.stage = '暂时找不到这次任务';
-          state.error = '任务记录已失效，可以重新提交提示词。';
-          setNetwork('');
-          addLog(state.stage);
-          render();
-          saveState();
-          continuePolling = false;
-        } else {
-          networkFailures++;
-          nextDelay = Math.min(12000, 1800 * Math.pow(1.5, networkFailures));
-          setNetwork('连接暂时中断，正在自动重连。任务进度恢复后会继续显示。');
-        }
-      } finally {
-        pollInFlight = false;
-        if (continuePolling && state.id === expectedId) schedulePoll(nextDelay);
-      }
-    }
-    elements.promptForm.addEventListener('submit', event => {
-      event.preventDefault();
-      if (submitting || ['queued','running','review'].includes(state.status)) return;
-      if (state.pending) { submitPending(); return; }
-      const prompt = elements.prompt.value.trim();
-      if (!prompt) { elements.prompt.focus(); return; }
-      const tool = fabricCatalog.tools.find(item => item.id === elements.fabricTool.value);
-      if (tool.requires_reference && !referenceFile) {
-        state.error = '此工具预设需要先上传一张参考图片。';
-        render();
-        return;
-      }
-      clearTimeout(pollTimer);
-      state = { id:null, status:'pending', prompt, pending:{ prompt, tool:tool.id, request_id:requestId() }, logs:[], stage:'正在提交提示词', error:'', imageFilename:'' };
-      if (referenceFile) {
-        state.pending.needs_image = true;
-        state.pending.image_upload_id = requestId().replaceAll('-', '').slice(0, 32);
-        if (referenceUploadId) state.pending.upload_id = referenceUploadId;
-      }
-      resetImage();
-      addLog('开始本次创作');
-      saveState();
-      submitPending();
-    });
-    elements.prompt.addEventListener('input', () => { state.prompt = elements.prompt.value; render(); saveState(); });
-    document.querySelectorAll('.example').forEach(button => button.addEventListener('click', () => {
-      applyFabricPreset(button.dataset.theme);
-      elements.prompt.focus();
-    }));
-    window.addEventListener('online', () => {
-      sendHeartbeat();
-      if (state.pending && !submitting) submitPending();
-      else if (state.id && ['queued','running','review'].includes(state.status)) schedulePoll(0);
-      else if (state.status === 'done' && !elements.reloadImage.hidden) showImage(true);
-    });
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) sendHeartbeat();
-      if (!document.hidden && state.id && ['queued','running','review'].includes(state.status)) schedulePoll(0);
-    });
-    function restoreState(saved) {
-      if (saved && typeof saved === 'object') {
-        state = {
-          id:typeof saved.id === 'string' ? saved.id : null,
-          status:statusNames[saved.status] ? saved.status : 'idle',
-          prompt:typeof saved.prompt === 'string' ? saved.prompt : '',
-          pending:saved.pending && typeof saved.pending.prompt === 'string' && typeof saved.pending.request_id === 'string' ? saved.pending : null,
-          logs:Array.isArray(saved.logs) ? saved.logs.filter(item => item && typeof item.message === 'string' && Number.isFinite(item.time)).slice(-40) : [],
-          stage:typeof saved.stage === 'string' ? saved.stage : '',
-          error:typeof saved.error === 'string' ? saved.error : '',
-          imageFilename:typeof saved.imageFilename === 'string' ? saved.imageFilename : ''
-        };
-      }
-    }
-    window.addEventListener('message', event => {
-      if (event.origin !== entryOrigin || event.source !== window.parent || event.data?.type !== 'fabric-resume-state') return;
-      if (!entryReady && !state.id && !state.pending && !submitting) {
-        restoreState(event.data.state);
-        elements.prompt.value = state.prompt;
-        renderLogs(); render();
-        if (state.pending) submitPending();
-        else if (state.id) schedulePoll(0);
-      }
-      entryReady = true;
-      saveState();
-    });
-    try {
-      restoreState(JSON.parse(sessionStorage.getItem(storageKey) || 'null'));
-    } catch (_) { /* Ignore invalid or unavailable storage. */ }
-    elements.prompt.value = state.prompt;
-    if (!state.prompt && !state.id && !state.pending) applyFabricPreset();
-    if (state.pending?.upload_id) elements.referenceName.textContent = '参考图片已上传，本次任务会继续使用该图片。';
-    renderLogs();
-    render();
-    if (state.pending) submitPending();
-    else if (state.id) schedulePoll(0);
-    sendHeartbeat();
-    setInterval(sendHeartbeat, 5000);
-  </script>
-</body>
-</html>
+  <dialog id="endDialog" style="max-width:560px;border:1px solid #dce5f0;border-radius:12px;padding:24px">
+    <h3>确认结束本次生成任务？</h3>
+    <p>你点击了“生成已结束”。</p>
+    <p>此操作适用于 AI 实际上没有启动图片生成任务的情况，例如 AI 只回复了文字、要求补充参考图片、询问其他问题，或者当前页面明显没有进入图片生成状态。</p>
+    <p>确认后，本次任务将立即结束。系统不会继续等待图片生成，也不会继续检测完成标记。如果你仍然需要生成这张图片，需要重新提交一次生成任务。</p>
+    <p>建议你在重新生成之前检查并适当修改提示词。AI 本次没有启动图片生成，可能与提示词内容、参考图片要求或当前指令的理解有关。如果直接使用完全相同的内容再次提交，有可能再次出现相同情况。</p>
+    <button id="cancelEnd" type="button" class="secondary">取消，继续当前任务</button>
+    <button id="confirmEnd" type="button" class="secondary">确认结束任务</button>
+  </dialog>
+  <script>window.workflowConfig={catalog:{{ fabric_catalog | tojson }},serverId:{{ heartbeat_server_id | tojson }},entryOrigin:{{ entry_origin | tojson }}};</script>
+  <script src="/static/workflow.js"></script>
+</body></html>

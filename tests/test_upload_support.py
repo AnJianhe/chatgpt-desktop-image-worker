@@ -71,7 +71,7 @@ class UploadTests(unittest.TestCase):
         status = self.wait(job_id)
         self.assertEqual(status['status'], 'done', status)
         self.assertEqual(self.calls[0][0], data['prompt'])
-        self.assertEqual(self.calls[0][1], self.folder / 'uploads' / ('a' * 32 + '.png'))
+        self.assertEqual(self.calls[0][1], self.folder / 'job-inputs' / job_id / '1.png')
         with self.client.get(status['image_url']) as response:
             self.assertEqual(response.data, self.result.read_bytes())
         self.assertEqual(self.client.post('/jobs', json=data).get_json()['id'], job_id)

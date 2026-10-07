@@ -42,7 +42,8 @@ class HeartbeatHTTPTests(unittest.TestCase):
         response = self.client.get('/')
         text = response.get_data(as_text=True)
         self.assertIn(self.tracker.server_id, text)
-        self.assertIn('setInterval(sendHeartbeat, 5000)', text)
+        with self.client.get('/static/workflow.js') as response:
+            self.assertIn('setInterval(heartbeat,5000)', response.get_data(as_text=True))
         self.assertEqual(response.headers['Cache-Control'], 'no-store')
 
     def test_browser_packet_is_recorded_only_for_current_host(self):
