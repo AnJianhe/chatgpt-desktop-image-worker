@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import hashlib
 import io
 import logging
+import traceback
 import math
 import os
 from pathlib import Path
@@ -285,10 +286,12 @@ class JobManager:
         data = self.snapshot(job.id)
         data.update(request_id=job.request_id, _image=str(job.image) if job.image else None, _mimetype=job.image_mimetype, _filename=job.image_filename)
         self.history.save(data)
+        self.history.append_log(job.id, 'state', **data)
 
     def _log(self, job_id: str, message: str) -> None:
         stage = str(message).strip()[:500]
         with self.lock:
+            self.history.append_log(job_id, 'automation', message=str(message))
             if job_id in self.jobs:
                 self.jobs[job_id].stage = stage
         LOGGER.info("任务 %s：%s", job_id, stage)
@@ -392,6 +395,7 @@ class JobManager:
             except Exception as exc:
                 LOGGER.exception("任务 %s 执行失败", job_id)
                 with self.lock:
+                    self.history.append_log(job_id, 'exception', message=str(exc), traceback=traceback.format_exc())
                     job = self.jobs[job_id]
                     job.status = "error"
                     job.error = str(exc) or type(exc).__name__
@@ -449,7 +453,8 @@ def make_app(
 
     @app.get("/health")
     def health():
-        return jsonify(status="ok", worker_alive=manager.worker.is_alive(), server_id=heartbeat.server_id)
+        return jsonify(status="ok", worker_alive=manager.worker.is_alive(), server_id=heartbeat.server_id,
+                       automation_version=Automation.VERSION)
 
     @app.route("/api/tunnel-heartbeat", methods=["GET", "POST"])
     def tunnel_heartbeat():
@@ -574,6 +579,15 @@ def make_app(
         if data is None:
             return jsonify(error="任务不存在或已从历史记录中移除。"), 404
         return jsonify(data)
+
+    @app.get("/jobs/<job_id>/log")
+    def job_log(job_id):
+        if not re.fullmatch(r'[0-9a-f]{32}', job_id) or manager.snapshot(job_id) is None:
+            return jsonify(error="任务不存在"), 404
+        path = manager.history.log_path(job_id)
+        if not path.is_file():
+            return jsonify(error="此旧任务没有独立日志"), 404
+        return send_file(path, mimetype='application/x-ndjson', as_attachment=True, download_name=job_id+'.jsonl', conditional=False)
 
     @app.get("/jobs/<job_id>/preview")
     def job_preview(job_id: str):

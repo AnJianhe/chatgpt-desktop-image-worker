@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `cloud_task_request` ON `cloud_tasks` (`owner`,`request_id`);

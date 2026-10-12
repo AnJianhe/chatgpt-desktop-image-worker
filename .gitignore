@@ -37,3 +37,13 @@ job-inputs/
 app/generation-history/
 generation-history/
 *.sqlite3*
+
+uptime-kuma/
+app/kuma-staging/
+app/kuma-admin.json
+
+app/cloud_agent_config.json
+
+bug-repair-desk/.openai/hosting.json
+bug-repair-desk/.env*
+*.jsonl

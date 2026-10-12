@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 import sqlite3
+import time
 
 
 class GenerationHistory:
@@ -20,6 +21,7 @@ class GenerationHistory:
                 data = json.loads(raw)
                 data.update(status='error', stage='服务器重启，原任务已中断，未自动重新生成。', error='服务器重启中断任务，请检查后手动提交新任务。')
                 data.pop('queue_position', None)
+                self.append_log(job_id,'interrupted',message=data['error'])
                 db.execute('UPDATE records SET status=?,payload=? WHERE id=?', ('error', json.dumps(data, ensure_ascii=False), job_id))
 
     @contextmanager
@@ -35,6 +37,16 @@ class GenerationHistory:
         with self.connect() as db:
             db.execute('INSERT INTO records VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,payload=excluded.payload',
                        (data['id'], data['created_at'], data['status'], data.get('request_id'), json.dumps(data, ensure_ascii=False)))
+
+    def log_path(self, job_id):
+        folder = self.folder / 'logs'
+        folder.mkdir(exist_ok=True)
+        return folder / (job_id + '.jsonl')
+
+    def append_log(self, job_id, event, **details):
+        # Append-only per-task files: no rotation, trimming or stage truncation.
+        with self.log_path(job_id).open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps({'time': time.time(), 'event': event, **details}, ensure_ascii=False) + '\n')
 
     def get(self, job_id=None, request_id=None):
         with self.connect() as db:
