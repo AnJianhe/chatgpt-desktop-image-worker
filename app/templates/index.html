@@ -93,12 +93,20 @@
     .alert-controls label {margin:0;font-size:13px;}
     .task-card[data-status="review"],.task-card[data-status="error"] {border:2px solid #dc2626;background:#fff1f2;color:#991b1b;}
     .error-message {border:2px solid #dc2626;font-size:15px;font-weight:600;}
+    .task-sections {padding:22px 25px 0;display:grid;gap:22px;}
+    .task-section h3 {margin:0 0 12px;font-size:16px;}
+    .task-section h3 span {margin-left:8px;color:var(--muted);font-size:12px;}
+    .work-task {padding:14px;border:1px solid var(--line);border-radius:10px;margin-bottom:10px;}
+    .work-task p {margin:9px 0;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+    .work-task small,.task-empty {font-size:12px;color:var(--muted);}
+    .work-task-actions {display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+    .work-task[data-status="review"] {border:2px solid #dc2626;background:#fff1f2;}
   </style>
 </head>
 <body>
   <div class="shell">
     <header>
-      <div class="brand"><span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"/></svg></span>画图助手</div>
+      <div class="brand"><span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"/></svg></span>画图助手 <span id="appVersion" aria-label="当前版本 v0.2.7" style="font-size:11px;font-weight:500;color:var(--muted);padding:3px 7px;background:#edf1f7;border-radius:6px;white-space:nowrap">v0.2.7</span></div>
       <div id="connection" class="connection"><span class="connection-dot"></span><span id="connectionText">准备就绪</span></div>
     </header>
     <section class="hero">
@@ -114,6 +122,7 @@
     <section id="attentionBanner" class="attention-banner" role="alert" aria-live="assertive" hidden>
       <p id="attentionText"></p>
       <button id="dismissAttention" class="secondary" type="button">知道了</button>
+      <a id="reportAttention" href="/report-bug" hidden>报告此问题</a>
       <button id="viewAttentionTask" class="secondary" type="button" hidden>查看需要处理的任务</button>
     </section>
     <main class="layout">
@@ -151,7 +160,20 @@
         </form>
       </section>
       <section class="card" aria-labelledby="resultTitle">
-        <div id="taskList" aria-label="任务历史" style="padding:20px;display:grid;gap:8px"></div><div class="result-head"><h2 id="resultTitle" class="card-title">生成结果</h2><span id="statusBadge" class="badge" data-status="idle">等待任务</span></div>
+        <div class="task-sections">
+          <section class="task-section" aria-labelledby="queuedTitle">
+            <h3 id="queuedTitle">排队中 <span id="queuedCount">0</span></h3>
+            <p class="task-empty">包含正在提交、排队、执行和等待确认的任务。</p>
+            <div id="queuedList"></div><p id="queuedEmpty" class="task-empty">暂无待处理任务。</p>
+          </section>
+          <section class="task-section" aria-labelledby="completedTitle">
+            <h3 id="completedTitle">已完成待下载 <span id="completedCount">0</span></h3>
+            <p class="task-empty">下载后从这里移除，生成记录仍保留。</p>
+            <div id="completedList"></div><p id="completedEmpty" class="task-empty">暂无待下载图片。</p>
+          </section>
+        </div>
+        <div class="result-head"><h2 id="resultTitle" class="card-title">生成结果</h2><span id="statusBadge" class="badge" data-status="idle">等待任务</span></div>
+        <p><a id="generationLog" hidden download>下载本次生成日志</a></p>
         <div id="preview" class="preview">
           <div id="placeholder" class="placeholder">
             <div class="placeholder-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="5" width="24" height="22" rx="4"/><circle cx="11" cy="12" r="2.5"/><path d="m5 23 7-7 5 5 4-5 6 7"/></svg></div>

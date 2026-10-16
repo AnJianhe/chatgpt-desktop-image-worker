@@ -1,18 +1,16 @@
 {
-  "name": "fabric-image-entry-opensource",
+  "name": "fabric-image-entry",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/worker.test.mjs",
+    "test": "node --test tests/*.test.mjs",
     "db:generate": "drizzle-kit generate",
-    "validate": "node scripts/validate-artifact.mjs",
-    "preview": "node scripts/preview.mjs"
+    "validate": "node scripts/validate-artifact.mjs"
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.0",
-    "drizzle-orm": "^0.44.0"
-  },
-  "version": "0.1.0",
-  "license": "MIT"
+    "drizzle-orm": "^0.44.0",
+    "esbuild": "^0.25.0"
+  }
 }

@@ -117,6 +117,15 @@ def download_folder(cfg, config_path) -> Path:
     return folder
 
 
+def preferred_download_candidates(changed: dict) -> dict:
+    """兼容程序另存为名称和 ChatGPT 自带名称；其他名称仍可回退读取。"""
+    preferred = {
+        path: state for path, state in changed.items()
+        if path.name.casefold().startswith(("chatgpt_download_", "chatgpt 图像", "chatgpt image"))
+    }
+    return preferred or changed
+
+
 def image_files(folder: Path) -> dict:
     result = {}
     try:
@@ -392,6 +401,8 @@ def launch(target: str) -> None:
 
 
 class Automation:
+    VERSION = 'v0.2.7'
+
     def __init__(self, cfg: dict, config_path: Path, log=print, stop=None, review=None):
         self.cfg, self.config_path, self.log = cfg, config_path, log
         self.stop = stop or threading.Event()
@@ -442,7 +453,19 @@ class Automation:
 
     def shot(self):
         self.assert_target()
-        return self.pag.screenshot(region=self.rect())
+        screenshot = self.pag.screenshot(region=self.rect())
+        if time.monotonic() >= getattr(self, '_next_preference_check', 0):
+            self._next_preference_check = time.monotonic() + 2
+            from image_preference import skip_point
+            point = skip_point(screenshot)
+            if point is not None:
+                self.assert_target()
+                left, top, _, _ = self.rect()
+                self.log('检测到“你更喜欢哪一张图像？”，自动点击“跳过”……')
+                self.pag.click(left + point[0], top + point[1])
+                self.sleep(.4)
+                screenshot = self.pag.screenshot(region=self.rect())
+        return screenshot
 
     def marker_path(self):
         path = Path(self.cfg["template"])
@@ -735,6 +758,7 @@ class Automation:
             now = time.monotonic()
             changed = {path: state for path, state in image_files(folder).items()
                        if state[0] > 0 and before.get(path) != state}
+            changed = preferred_download_candidates(changed)
             if len(changed) > 1:
                 raise RuntimeError("下载目录同时出现多张新图片，无法确定本次副本；当前对话已保留。")
             for path, state in changed.items():

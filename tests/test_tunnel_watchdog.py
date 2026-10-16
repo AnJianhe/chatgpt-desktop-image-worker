@@ -494,7 +494,7 @@ class WatchdogTests(unittest.TestCase):
         kernel.CloseHandle.side_effect = lambda handle: events.append('mutex closed')
         def stopped(args):
             self.assertEqual(args.self_restart_seconds, 300)
-            self.assertEqual(args.protocol, 'auto')
+            self.assertEqual(args.protocol, 'http2')
             events.append('old child job closed')
             return True
         def relaunched():

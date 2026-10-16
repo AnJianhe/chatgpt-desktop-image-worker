@@ -62,7 +62,7 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   assert.equal(await page.locator('#applyPreset').isVisible(),false);
   const literal='  建筑摄影\n任意提示词，沿用参考图配色；无参考图时采用协调自然配色。  ';
   await page.fill('#prompt',literal);await page.click('#submitButton');
-  await page.waitForFunction(()=>document.querySelectorAll('#taskList .task-card').length===1);
+  await page.waitForFunction(()=>document.querySelectorAll('#queuedList .work-task').length===1);
   assert.equal(await page.locator('#prompt').isEnabled(),true);
   const file=n=>({name:n+'.png',mimeType:'image/png',buffer:png});
   await page.setInputFiles('#referenceFile',[file(1),file(2),file(3)]);
@@ -78,7 +78,7 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   await page.fill('#prompt','任务B');await page.click('#submitButton');
   await page.locator('#referencePreviews button').nth(0).click();
   await page.fill('#prompt','任务C');await page.click('#submitButton');
-  await page.waitForFunction(()=>document.querySelectorAll('#taskList .task-card').length===3);
+  await page.waitForFunction(()=>document.querySelectorAll('#queuedList .work-task').length===3);
   await page.waitForTimeout(500);
   assert.equal(bodies.length,3);assert.equal(bodies[0].prompt,literal);
   assert.equal(bodies[1].prompt,'任务B');assert.equal(bodies[1].upload_ids.length,3);
@@ -102,7 +102,7 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   Object.assign(a,{status:'review',review_version:3});await page.waitForTimeout(2300);
   await page.click('#endGeneration');
   // Switching selection must never terminate the wrong task.
-  await page.evaluate(()=>document.querySelector('#taskList .task-card').click());
+  await page.locator('#queuedList .work-task').first().getByRole('button',{name:'查看任务'}).click();
   await page.click('#confirmEnd');await page.waitForTimeout(100);
   assert.deepEqual(reviews[2],{id:'task1',action:'end',version:3,confirmed:true});
   assert.equal(a.status,'not_generated');assert.equal(jobs.get('task2').status,'queued');
@@ -113,10 +113,14 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   await page.locator('#historyList button').click();
   assert.match(await page.textContent('#statusBadge'),/未生成/);
   const stillActive=jobs.get('task2');Object.assign(stillActive,{status:'review',review_version:1,preview_url:'/jobs/task2/preview?v=1'});await page.waitForTimeout(2300);
-  await page.locator('#taskList .task-card').nth(1).click();
+  await page.locator('#queuedList .work-task[data-status="review"]').getByRole('button',{name:'查看并确认'}).click();
   await page.click('#endGeneration');
   Object.assign(stillActive,{status:'done',image_url:'/jobs/task2/image'});await page.waitForTimeout(2300);
   assert.equal(await page.locator('#endDialog').isVisible(),false);
+  assert.equal(await page.locator('#completedList .work-task').count(),1);
+  await page.locator('#completedList .work-task').getByRole('button',{name:'下载图片'}).click();
+  await page.waitForFunction(()=>document.querySelector('#completedCount').textContent==='0');
+  assert.equal(await page.locator('#completedList .work-task').count(),0);
   assert.equal(await page.locator('#attentionBanner').isVisible(),false);
   const c=jobs.get('task3');Object.assign(c,{status:'error',error:'下载文件失败'});await page.waitForTimeout(2300);
   assert.match(await page.textContent('#attentionText'),/下载文件失败/);
@@ -139,7 +143,8 @@ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
   assert.equal(reviews.length,3);
   assert.deepEqual(errors,[]);
   await page.reload();await page.waitForTimeout(100);
-  assert.equal(await page.locator('#taskList .task-card').count(),3);
+  assert.equal(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('image-helper-workflow-v2')).tasks.length),3);
+  assert.equal(await page.locator('#completedList .work-task').count(),0);
   assert.equal(bodies.length,3);
   await page.setViewportSize({width:390,height:844});
   assert.equal(await page.locator('#submitButton').isVisible(),true);

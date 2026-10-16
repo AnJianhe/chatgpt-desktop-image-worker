@@ -593,8 +593,8 @@ def main():
     parser.add_argument("--executable", default=str(ROOT.parent / "tools" / "cloudflared-windows-amd64.exe"))
     parser.add_argument("--origin", default="http://127.0.0.1:8765")
     parser.add_argument("--metrics-port", type=int, default=20246)
-    parser.add_argument("--protocol", choices=("auto", "quic", "http2"), default="auto",
-                        help="隧道协议，默认 auto：优先 QUIC，必要时回退 HTTP/2")
+    parser.add_argument("--protocol", choices=("auto", "quic", "http2"), default="http2",
+                        help="隧道协议，默认 HTTP/2，避免代理环境下 QUIC 反复超时")
     parser.add_argument("--startup-grace", type=float, default=180,
                         help="初次连接的等待秒数，默认 180")
     parser.add_argument("--disconnect-grace", type=float, default=30,

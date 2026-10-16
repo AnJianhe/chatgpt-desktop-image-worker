@@ -8,5 +8,6 @@
       "database_name": "fabric-image-entry",
       "database_id": "REPLACE_WITH_DATABASE_ID"
     }
-  ]
+  ],
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "YOUR_PRIVATE_IMAGE_BUCKET" }]
 }

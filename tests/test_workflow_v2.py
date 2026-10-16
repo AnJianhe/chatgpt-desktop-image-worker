@@ -38,6 +38,61 @@ class WorkflowTests(unittest.TestCase):
         self.manager.close(2)
         self.tmp.cleanup()
 
+    def test_health_reports_loaded_automation_version(self):
+        health = self.client.get('/health').get_json()
+        self.assertEqual(health['automation_version'], ui.Automation.VERSION)
+        self.assertEqual(health['automation_version'], 'v0.2.7')
+
+    def test_cloud_bridge_real_multipart_zero_to_three_references(self):
+        from cloud_agent import Agent
+        for count in range(4):
+            state = self.root / f'bridge-{count}.json'
+            agent = Agent({'endpoint':'https://example.invalid','worker_token':'test'}, state)
+            agent.background_heartbeat = True
+            task = {'id':f'{count+100:032x}','prompt':'测试参考图片传输','tool':'custom',
+                    'upload_ids':[f'{count*10+i+1000:032x}' for i in range(count)], 'local_id':None}
+            image = io.BytesIO()
+            Image.new('RGB', (32,32), 'blue').save(image, format='PNG')
+            def cloud(path, data=None, method=None, raw=False, **kw):
+                if path == '/worker/claim': return {'task':task}
+                if path.startswith('/worker/uploads/'): return image.getvalue(), 'image/png'
+                if path.endswith('/decision'): return {'decision':None}
+                return {'ok':True}
+            def local(path, data=None, method=None, raw=False, content_type=None):
+                kwargs = {'method':method or ('POST' if data is not None else 'GET')}
+                if isinstance(data, dict): kwargs['json'] = data
+                elif data is not None: kwargs.update(data=data, content_type=content_type)
+                response = self.client.open(path, **kwargs)
+                self.assertLess(response.status_code, 400, response.get_data(as_text=True))
+                value = (response.data,response.content_type) if raw else response.get_json()
+                response.close()
+                return value
+            agent.cloud.call = cloud
+            agent.local.call = local
+            agent.step()
+            snap = self.wait(agent.state['local_id'], 'done')
+            self.assertEqual(snap['referenceImages'],task['upload_ids'])
+            passed_refs = self.calls[-1][1]
+            self.assertEqual(len(passed_refs) if isinstance(passed_refs,(tuple,list)) else int(passed_refs is not None),count)
+            if count:
+                # Stable cloud IDs allow network retries without duplicate uploads.
+                self.assertEqual(agent.upload_reference(image.getvalue(),'image/png',task['upload_ids'][0]),task['upload_ids'][0])
+
+    def test_full_generation_logs_survive_restart_without_truncating(self):
+        long_message='完整日志内容'*300
+        def runner(prompt,cfg,path,log,refs=None,review=None):
+            log(long_message)
+            raise RuntimeError('用于验证异常堆栈')
+        self.start(runner)
+        job=self.submit().get_json()['id'];self.wait(job,'error')
+        response=self.client.get('/jobs/'+job+'/log')
+        text=response.get_data(as_text=True);response.close()
+        self.assertEqual(response.status_code,200)
+        self.assertIn(long_message,text);self.assertIn('Traceback',text)
+        self.start(runner)
+        restored=self.client.get('/jobs/'+job+'/log')
+        self.assertEqual(restored.get_data(as_text=True),text);restored.close()
+
     def upload(self, index):
         data=io.BytesIO()
         Image.new('RGB', (30+index, 30), (index*30,0,0)).save(data,format='PNG')
@@ -156,7 +211,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_static_frontend_and_three_confirmation_buttons(self):
         html=self.client.get('/').get_data(as_text=True)
-        for text in ['multiple','referencePreviews','endGeneration','确认结束本次生成任务？','取消，继续当前任务','确认结束任务','taskList']:
+        for text in ['multiple','referencePreviews','endGeneration','确认结束本次生成任务？','取消，继续当前任务','确认结束任务','queuedList','completedList','v0.2.7']:
             self.assertIn(text,html)
         with self.client.get('/static/workflow.js') as response:
             self.assertEqual(response.status_code,200)

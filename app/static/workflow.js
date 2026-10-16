@@ -15,7 +15,7 @@
   }
   function snapshotDraft(prompt, tool, references) {
     const requestId=uid();
-    return {taskId:requestId, result:null, request_id:requestId, prompt, tool, referenceImages:references.map(r => ({...r})), upload_ids:[], status:'pending', id:null, stage:'正在提交', error:null};
+    return {taskId:requestId, submitted_at:Date.now()/1000, result:null, request_id:requestId, prompt, tool, referenceImages:references.map(r => ({...r})), upload_ids:[], status:'pending', id:null, stage:'正在提交', error:null};
   }
   function presetPrompt(catalog, tool, layout, theme, palette, hasReference) {
     if (tool.id === 'custom') return '';
@@ -34,16 +34,43 @@
   let references = [], tasks = [], selected = null, modalTarget = null, submittingChain = Promise.resolve();
   let heartbeatId = config.serverId, heartbeatBusy = false, polling = false, ready = window.parent === window;
   let generatedPreset = null;
+  const downloadedIds=new Set();
+  try{JSON.parse(localStorage.getItem('image-helper-downloaded-v1')||'[]').forEach(id=>downloadedIds.add(id));}catch(_){}
   [['fabricTool',catalog.tools],['fabricLayout',catalog.layouts],['fabricTheme',catalog.themes]].forEach(([id, rows]) => rows.forEach(r => $(id).add(new Option(r.label, r.id))));
   catalog.palettes.forEach(p => $('fabricPalette').add(new Option(p,p)));
   $('fabricTool').value = 'fabric';
   function persist() {
-    const state = {schema:2, tasks:tasks.map(t => ({...t, referenceImages:t.referenceImages.map(r => ({key:r.key, uploadId:r.uploadId, name:r.file?.name || r.name}))})), selected, draft:{prompt:$('prompt').value,tool:$('fabricTool').value}};
+    const state = {schema:2, downloadedIds:[...downloadedIds], acknowledgedAlerts:[...acknowledgedAlerts], successfulTaskTime, tasks:tasks.map(t => ({...t, downloading:false, referenceImages:t.referenceImages.map(r => ({key:r.key, uploadId:r.uploadId, name:r.file?.name || r.name}))})), selected, draft:{prompt:$('prompt').value,tool:$('fabricTool').value}};
     try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch (_) {}
     if (ready && config.entryOrigin && window.parent !== window) window.parent.postMessage({type:'fabric-task-state',state},config.entryOrigin);
   }
   let inputWarning=null, connectionWarning=null, connectionFailures=0;
   const announced=new Set(), dismissed=new Set();
+  const acknowledgedAlerts=new Set();
+  let successfulTaskTime=0;
+  function rememberAlerts() {
+    try{localStorage.setItem('image-helper-alerts-v1',JSON.stringify({acknowledgedAlerts:[...acknowledgedAlerts],successfulTaskTime}));}catch(_){}
+  }
+  function mergeAlertPreferences(state) {
+    if(!state || typeof state!=='object')return;
+    if(Array.isArray(state.acknowledgedAlerts))state.acknowledgedAlerts.forEach(key=>{if(typeof key==='string')acknowledgedAlerts.add(key);});
+    const time=Number(state.successfulTaskTime);
+    if(Number.isFinite(time)&&time>successfulTaskTime)successfulTaskTime=time;
+  }
+  try{mergeAlertPreferences(JSON.parse(localStorage.getItem('image-helper-alerts-v1')||'null'));}catch(_){}
+  function taskTime(t){return Number(t.created_at||t.submitted_at)||0;}
+  function rememberSuccesses(records) {
+    const previous=successfulTaskTime;
+    records.filter(t=>t.status==='done').forEach(t=>{successfulTaskTime=Math.max(successfulTaskTime,taskTime(t));});
+    if(successfulTaskTime!==previous)rememberAlerts();
+  }
+  function oldErrorIsResolved(t) {
+    const time=taskTime(t);
+    if(time && successfulTaskTime>time)return true;
+    // Older saved drafts may have no timestamp; use their submission order.
+    if(!time)return tasks.slice(tasks.indexOf(t)+1).some(later=>later.status==='done');
+    return false;
+  }
   let activeWarning=null, voiceEnabled=true;
   try { voiceEnabled=localStorage.getItem('image-helper-voice')!=='off'; } catch (_) {}
   $('voiceEnabled').checked=voiceEnabled;
@@ -59,12 +86,14 @@
     if(t.status==='review')return {key:t.request_id+':review:'+t.review_version,task:t,
       text:'需要人工确认：请查看截图，选择“已经生成”“继续等待”或“生成已结束”。',
       voice:'请查看界面，选择是否下载图片。已经生成，请点击已经生成；还在生成，请点击继续等待。'};
-    if(t.submitError || t.status==='error')return {key:t.request_id+':error:'+(t.submitError||t.error),task:t,
+    const key=(t.id||t.request_id)+':error:'+(t.submitError||t.error);
+    if((t.submitError || t.status==='error')&&!acknowledgedAlerts.has(key)&&!oldErrorIsResolved(t))return {key,task:t,
       text:'任务出现问题：'+(t.submitError||t.error||t.stage||'请查看任务详情。'),
       voice:'任务出现问题，请查看界面的红色提示。'};
     return null;
   }
   function refreshWarning() {
+    rememberSuccesses(tasks);
     const warning=inputWarning || tasks.map(warningForTask).find(w=>w?.task.status==='review') ||
       tasks.map(warningForTask).find(w=>w&&!dismissed.has(w.key)) || (connectionWarning&&!dismissed.has(connectionWarning.key)?connectionWarning:null);
     if(!warning && activeWarning)window.speechSynthesis?.cancel();
@@ -73,12 +102,22 @@
     document.body.classList.toggle('needs-attention',!!warning);
     $('attentionText').textContent=warning?.text||'';
     $('viewAttentionTask').hidden=!warning?.task;
+    const reportLink=$('reportAttention');if(reportLink){reportLink.hidden=!warning||warning.task?.status==='review';reportLink.href='/report-bug?'+new URLSearchParams({task_id:warning?.task?.id||'',error:warning?.task?.error||warning?.text||''});}
     $('dismissAttention').hidden=!warning || warning.task?.status==='review';
     if(warning && !announced.has(warning.key)){
       announced.add(warning.key);speak(warning.voice);
     }
   }
-  $('dismissAttention').onclick=()=>{if(activeWarning){dismissed.add(activeWarning.key);if(activeWarning===inputWarning)inputWarning=null;if(activeWarning===connectionWarning)connectionWarning=null;refreshWarning();}};
+  $('dismissAttention').onclick=()=>{
+    if(!activeWarning)return;
+    dismissed.add(activeWarning.key);
+    if(activeWarning.task && (activeWarning.task.status==='error'||activeWarning.task.submitError)){
+      acknowledgedAlerts.add(activeWarning.key);rememberAlerts();
+    }
+    if(activeWarning===inputWarning)inputWarning=null;
+    if(activeWarning===connectionWarning)connectionWarning=null;
+    refreshWarning();persist();
+  };
   $('voiceEnabled').onchange=()=>{
     voiceEnabled=$('voiceEnabled').checked;
     try{localStorage.setItem('image-helper-voice',voiceEnabled?'on':'off');}catch(_){}
@@ -138,6 +177,50 @@
     $('referenceFile').value='';
   };
   function current() { return tasks.find(t=>t.request_id===selected); }
+  function downloadKey(t){return t.id||t.request_id;}
+  async function downloadTask(t) {
+    if(!t?.image_url||t.status!=='done'||t.downloading)return;
+    t.downloading=true;render();
+    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),120000);
+    try{
+      const response=await fetch(t.image_url,{cache:'no-store',signal:controller.signal});
+      if(!response.ok)throw new Error('下载失败，请稍后重试。');
+      const blob=await response.blob();
+      if(!blob.size || !/^image\//i.test(blob.type))throw new Error('未获取到有效图片，请重试下载。');
+      const url=URL.createObjectURL(blob), link=document.createElement('a');
+      link.href=url;link.download=t.image_filename||'生成图片.png';link.hidden=true;
+      document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+      downloadedIds.add(downloadKey(t));
+      try{localStorage.setItem('image-helper-downloaded-v1',JSON.stringify([...downloadedIds]));}catch(_){}
+      error('');persist();
+    }catch(e){error(e.name==='AbortError'?'下载超时，图片仍保留在已完成待下载区，请重试。':e.message);}
+    finally{clearTimeout(timer);t.downloading=false;render();}
+  }
+  $('downloadLink').onclick=event=>{event.preventDefault();downloadTask(current());};
+  function renderTaskSections() {
+    const active=tasks.filter(t=>['pending','queued','running','review'].includes(t.status));
+    const completed=tasks.filter(t=>t.status==='done'&&!downloadedIds.has(downloadKey(t)));
+    $('queuedCount').textContent=active.length;$('completedCount').textContent=completed.length;
+    [['queuedList','queuedEmpty',active],['completedList','completedEmpty',completed]].forEach(([id,empty,rows])=>{
+      $(id).replaceChildren();$(empty).hidden=rows.length>0;
+      rows.slice().reverse().forEach(t=>{
+        const card=document.createElement('article');card.className='work-task';card.dataset.status=t.status;
+        const state=document.createElement('span');state.className='badge';state.dataset.status=t.status;state.textContent=names[t.status];
+        const prompt=document.createElement('p');prompt.textContent=t.prompt;
+        const meta=document.createElement('small');meta.textContent=t.referenceImages.length+' 张参考图'+(t.queue_position?' · 队列位置 '+t.queue_position:'');
+        const actions=document.createElement('div');actions.className='work-task-actions';
+        const view=document.createElement('button');view.type='button';view.className='secondary';view.textContent=t.status==='review'?'查看并确认':'查看任务';
+        view.onclick=()=>{selected=t.request_id;render();persist();$('resultTitle').scrollIntoView({behavior:'smooth',block:'start'});};actions.append(view);
+        if(t.status==='done'){
+          const download=document.createElement('button');download.type='button';download.className='secondary';download.textContent=t.downloading?'正在下载…':'下载图片';download.disabled=!!t.downloading;download.onclick=()=>downloadTask(t);actions.append(download);
+        }
+        if(t.status==='pending'&&t.submitError){
+          const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent='恢复提交';retry.onclick=()=>enqueueSubmit(t);actions.append(retry);
+        }
+        card.append(state,prompt,meta,actions);$(id).append(card);
+      });
+    });
+  }
   function render() {
     const tool=catalog.tools.find(r=>r.id===$('fabricTool').value);
     document.querySelector('.preset-grid').hidden=tool.id!=='fabric';
@@ -147,16 +230,7 @@
     $('characterCount').textContent=Array.from($('prompt').value).length+' 字';
     $('submitButton').disabled=!$('prompt').value.trim();
     $('submitLabel').textContent='提交新任务';
-    $('taskList').replaceChildren();
-    tasks.slice().reverse().forEach(t=>{
-      const button=document.createElement('button'); button.type='button'; button.className='secondary task-card';button.dataset.status=t.status;
-      button.textContent=(t===current()?'● ':'')+(names[t.status]||t.status)+' · '+t.prompt.slice(0,45)+' · '+t.referenceImages.length+' 张参考图';
-      button.onclick=()=>{selected=t.request_id; render(); persist();}; $('taskList').append(button);
-      if (t.status==='pending' && t.submitError) {
-        const retry=document.createElement('button'); retry.type='button'; retry.className='secondary'; retry.textContent='恢复提交此任务';
-        retry.onclick=()=>enqueueSubmit(t); $('taskList').append(retry);
-      }
-    });
+    renderTaskSections();
     const t=current();
     $('statusBadge').textContent=t ? names[t.status] : '等待任务';
     $('statusBadge').dataset.status=t?.status||'idle';
@@ -164,6 +238,7 @@
     $('taskId').hidden=!t?.id; $('taskId').textContent=t?.id||'';
     $('queueText').hidden=!t?.queue_position; $('queueText').textContent='队列位置 '+(t?.queue_position||'');
     $('reviewActions').hidden=t?.status!=='review';
+    const logLink=$('generationLog');if(logLink){logLink.hidden=!t?.id;logLink.href=t?.id?'/jobs/'+t.id+'/log':'#';}
     $('resultActions').hidden=!['done','review'].includes(t?.status);
     $('downloadLink').hidden=t?.status!=='done';
     $('placeholder').hidden=['done','review'].includes(t?.status);
@@ -195,7 +270,7 @@
       t.id=data.id; t.taskId=data.id; t.status=data.status; t.stage='任务已接收';
       t.referenceImages.forEach(r=>{r.name=r.file?.name||r.name;r.file=null;});
     } catch(e) {
-      if(e.status && e.status<500 && e.status!==429){t.status='error';t.error=e.message;}
+      if(e.status && e.status<500 && e.status!==429){t.status='error';t.stage='提交失败';t.error=e.message;}
       else t.submitError=e.message+'；可恢复提交，使用相同编号防止重复生成。';
     } finally {t.submitting=false;persist();render();loadHistory();}
   }
@@ -252,6 +327,7 @@
     try {
       const data=await request('/history?offset='+requestedOffset+'&limit=20&status='+encodeURIComponent(requestedFilter));
       if(requestedOffset!==historyOffset||requestedFilter!==$('historyFilter').value)return;
+      rememberSuccesses(data.items);refreshWarning();
       historyTotal=data.total;
       $('historyList').replaceChildren();
       data.items.forEach(record=>{
@@ -262,7 +338,7 @@
         card.append(meta,details);
         if(record.status==='done' && record.image_url){
           const img=document.createElement('img');img.src=record.image_url;img.loading='lazy';img.alt='生成记录图片';img.style.cssText='width:100%;height:160px;object-fit:contain';card.append(img);
-          const link=document.createElement('a');link.href=record.image_url;link.download=record.image_filename||'生成图片.png';link.className='secondary';link.textContent='下载原图';card.append(link);
+          const link=document.createElement('a');link.href=record.image_url;link.download=record.image_filename||'生成图片.png';link.className='secondary';link.textContent='下载原图';link.onclick=event=>{event.preventDefault();downloadTask(tasks.find(t=>t.id===record.id)||record);};card.append(link);
         }
         const stage=document.createElement('p');stage.textContent=record.error||record.stage;card.append(stage);
         const open=document.createElement('button');open.type='button';open.className='secondary';open.textContent='查看此任务';open.onclick=()=>selectRecord(record);card.append(open);
@@ -295,16 +371,18 @@
   }
   function restore(state) {
     if(!state || typeof state!=='object')return;
+    mergeAlertPreferences(state);rememberAlerts();
+    if(Array.isArray(state.downloadedIds))state.downloadedIds.forEach(id=>{if(typeof id==='string')downloadedIds.add(id);});
     if(state.schema===2 && Array.isArray(state.tasks)) {
       const known=new Set(tasks.map(t=>t.request_id));
-      for(const t of state.tasks){if(!t?.request_id||known.has(t.request_id))continue;tasks.push({...t,referenceImages:Array.isArray(t.referenceImages)?t.referenceImages:[],submitting:false,deciding:false});}
+      for(const t of state.tasks){if(!t?.request_id||known.has(t.request_id))continue;tasks.push({...t,referenceImages:Array.isArray(t.referenceImages)?t.referenceImages:[],submitting:false,deciding:false,downloading:false});}
       selected=selected||state.selected;
       if(!tasks.some(t=>t.request_id===selected)) selected=tasks[0]?.request_id||null;
       if(!$('prompt').value && state.draft){$('prompt').value=state.draft.prompt||'';if(catalog.tools.some(t=>t.id===state.draft.tool))$('fabricTool').value=state.draft.tool;}
     } else if(state.id && !tasks.some(t=>t.id===state.id)) {
       const t={...state,taskId:state.id,request_id:state.id,referenceImages:[],image_url:state.status==='done'?'/jobs/'+encodeURIComponent(state.id)+'/image':undefined,image_filename:state.imageFilename||'',preview_url:state.previewURL,review_version:state.reviewVersion};tasks.push(t);selected=t.request_id;
     }
-    tasks.filter(t=>t.status==='pending'&&!t.id).forEach(t=>{t.submitError='上次提交未完成，请选择恢复提交。';});render();poll();
+    tasks.filter(t=>t.status==='pending'&&!t.id).forEach(t=>{t.submitError=t.submitError||'上次提交未完成，请选择恢复提交。';});render();poll();
   }
   window.addEventListener('message',event=>{
     if(event.source!==window.parent||event.origin!==config.entryOrigin||event.data?.type!=='fabric-resume-state')return;
